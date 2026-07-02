@@ -71,3 +71,10 @@ files = ["src/payflow", "tests"]
 strict = true
 warn_unused_configs = true
 warn_unreachable = true
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]

@@ -14,7 +14,11 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+*.egg
 .eggs/
+wheels/
+pip-wheel-metadata/
+MANIFEST
 
 # Test and type-check caches
 .pytest_cache/
@@ -44,6 +48,10 @@ Thumbs.db
 # Docker/local artifacts
 .docker/
 docker-compose.override.yml
+compose.override.yml
 *.log
 tmp/
 temp/
+
+# Local generated files
+project_tree.txt
