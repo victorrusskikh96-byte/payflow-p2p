@@ -38,7 +38,7 @@ tests/e2e/          End-to-end tests
 
 The project currently has the base persistence layer, the Users module foundation,
 and the Auth module foundation in place. Auth is implemented at the domain,
-application, and infrastructure levels; HTTP endpoints are intentionally not added yet.
+application, infrastructure, and HTTP API levels.
 
 Implemented so far:
 
@@ -67,19 +67,23 @@ Implemented so far:
 - Issue token pair application use case.
 - Refresh token pair application use case with refresh token rotation.
 - Revoke refresh session application use case.
+- Auth API endpoints.
+- `POST /auth/register` and `POST /auth/login` return access and refresh tokens.
+- Refresh token rotation is available through `POST /auth/refresh`.
+- `POST /auth/logout` revokes the refresh session without storing raw refresh tokens.
+- `GET /auth/me` uses a JWT access token from `Authorization: Bearer <token>`.
 - Unit tests for the users domain.
 - Unit tests for password policy, password hashing, access tokens, refresh tokens,
   auth sessions, and auth use cases.
 - Integration tests for the users repository.
 - Integration tests for auth registration and authentication flows.
 - Integration tests for auth session repository and token pair rotation flows.
+- E2E tests for auth health, register, login, refresh, logout, and current user API.
 
 Not implemented yet:
 
-- Auth HTTP endpoints.
-- Register/login HTTP API.
-- Current user dependency.
 - Protected routes.
+- Wallets module foundation.
 
 ## Makefile Commands
 
@@ -99,6 +103,4 @@ Basic development commands:
 
 ## Next Steps
 
-- Auth API endpoints.
-- Current user dependency.
-- Protected routes.
+- Wallets module foundation.

@@ -14,6 +14,7 @@ from payflow.modules.auth.application.token_pairs import TokenPair
 from payflow.modules.auth.application.transactions import TransactionManager
 from payflow.modules.auth.application.use_cases import (
     AuthenticateUserUseCase,
+    GetCurrentUserUseCase,
     IssueTokenPairUseCase,
     RefreshTokenPairUseCase,
     RegisterUserUseCase,
@@ -26,6 +27,7 @@ __all__ = [
     "AuthCredentialsRepository",
     "AuthSessionRepository",
     "AuthenticateUserUseCase",
+    "GetCurrentUserUseCase",
     "IssueTokenPairUseCase",
     "PasswordHasher",
     "RefreshTokenPairUseCase",

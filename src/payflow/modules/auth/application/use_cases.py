@@ -15,6 +15,8 @@ from payflow.modules.auth.application.transactions import TransactionManager
 from payflow.modules.auth.domain import (
     AuthCredentials,
     AuthSession,
+    CurrentUserBlockedError,
+    CurrentUserNotFoundError,
     EmailAlreadyRegisteredError,
     ExpiredRefreshTokenError,
     InvalidCredentialsError,
@@ -89,6 +91,7 @@ class AuthenticateUserUseCase:
         users: UserRepository,
         credentials: AuthCredentialsRepository,
         password_hasher: PasswordHasher,
+        transaction_manager: TransactionManager,
     ) -> None:
         """Создает use case аутентификации пользователя.
 
@@ -96,10 +99,12 @@ class AuthenticateUserUseCase:
             users: Репозиторий пользователей.
             credentials: Репозиторий учетных данных.
             password_hasher: Сервис проверки паролей.
+            transaction_manager: Менеджер транзакции аутентификации.
         """
         self._users = users
         self._credentials = credentials
         self._password_hasher = password_hasher
+        self._transaction_manager = transaction_manager
 
     async def execute(self, *, email: str, password: str) -> User:
         """Аутентифицирует пользователя по email и паролю.
@@ -114,18 +119,53 @@ class AuthenticateUserUseCase:
         Raises:
             InvalidCredentialsError: Если пользователь, пароль или статус невалидны.
         """
-        user = await self._users.get_by_email(email)
-        if user is None or user.status is UserStatus.BLOCKED:
-            raise InvalidCredentialsError("Invalid email or password.")
+        async with self._transaction_manager:
+            user = await self._users.get_by_email(email)
+            if user is None or user.status is UserStatus.BLOCKED:
+                raise InvalidCredentialsError("Invalid email or password.")
 
-        credentials = await self._credentials.get_by_user_id(user.id)
-        if credentials is None:
-            raise InvalidCredentialsError("Invalid email or password.")
+            credentials = await self._credentials.get_by_user_id(user.id)
+            if credentials is None:
+                raise InvalidCredentialsError("Invalid email or password.")
 
-        if not self._password_hasher.verify_password(
-            password, credentials.password_hash
-        ):
-            raise InvalidCredentialsError("Invalid email or password.")
+            if not self._password_hasher.verify_password(
+                password, credentials.password_hash
+            ):
+                raise InvalidCredentialsError("Invalid email or password.")
+
+            return user
+
+
+class GetCurrentUserUseCase:
+    """Возвращает текущего пользователя по user_id из access token."""
+
+    def __init__(self, *, users: UserRepository) -> None:
+        """Создает use case получения текущего пользователя.
+
+        Args:
+            users: Репозиторий пользователей.
+        """
+        self._users = users
+
+    async def execute(self, *, user_id: UUID) -> User:
+        """Возвращает активного пользователя для защищенного запроса.
+
+        Args:
+            user_id: Идентификатор пользователя из проверенного access token.
+
+        Returns:
+            Доменная сущность текущего пользователя.
+
+        Raises:
+            CurrentUserNotFoundError: Если пользователь из token не найден.
+            CurrentUserBlockedError: Если пользователь заблокирован.
+        """
+        user = await self._users.get_by_id(user_id)
+        if user is None:
+            raise CurrentUserNotFoundError("Current user was not found.")
+
+        if user.status is UserStatus.BLOCKED:
+            raise CurrentUserBlockedError("Current user is blocked.")
 
         return user
 
@@ -335,9 +375,7 @@ class RevokeRefreshSessionUseCase:
     ) -> AuthSession:
         if refresh_token is not None:
             refresh_token_hash = self._refresh_tokens.hash_refresh_token(refresh_token)
-            session = await self._sessions.get_by_refresh_token_hash(
-                refresh_token_hash
-            )
+            session = await self._sessions.get_by_refresh_token_hash(refresh_token_hash)
         elif session_id is not None:
             session = await self._sessions.get_by_id(session_id)
         else:

@@ -29,6 +29,14 @@ class UnsupportedTokenTypeError(AuthDomainError):
     """Сообщает, что тип токена не поддерживается для операции."""
 
 
+class CurrentUserNotFoundError(AuthDomainError):
+    """Сообщает, что пользователь из access token не найден."""
+
+
+class CurrentUserBlockedError(AuthDomainError):
+    """Сообщает, что пользователь из access token заблокирован."""
+
+
 class WeakPasswordError(AuthDomainError):
     """Сообщает, что пароль не соответствует политике безопасности."""
 

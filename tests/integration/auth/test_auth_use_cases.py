@@ -52,6 +52,7 @@ def build_authenticate_use_case(async_session: AsyncSession) -> AuthenticateUser
         users=SQLAlchemyUserRepository(async_session),
         credentials=SQLAlchemyAuthCredentialsRepository(async_session),
         password_hasher=Argon2PasswordHasher(),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
 
 

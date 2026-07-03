@@ -7,10 +7,13 @@ import pytest
 
 from payflow.modules.auth.application import (
     AuthenticateUserUseCase,
+    GetCurrentUserUseCase,
     RegisterUserUseCase,
 )
 from payflow.modules.auth.domain import (
     AuthCredentials,
+    CurrentUserBlockedError,
+    CurrentUserNotFoundError,
     EmailAlreadyRegisteredError,
     InvalidCredentialsError,
     WeakPasswordError,
@@ -206,7 +209,22 @@ def build_authenticate_use_case(
         users=users,
         credentials=credentials,
         password_hasher=FakePasswordHasher(),
+        transaction_manager=FakeTransactionManager(),
     )
+
+
+def build_get_current_user_use_case(
+    users: FakeUserRepository,
+) -> GetCurrentUserUseCase:
+    """Собирает use case получения текущего пользователя.
+
+    Args:
+        users: Тестовый репозиторий пользователей.
+
+    Returns:
+        Use case получения текущего пользователя.
+    """
+    return GetCurrentUserUseCase(users=users)
 
 
 async def test_register_creates_user_and_auth_credentials() -> None:
@@ -320,9 +338,7 @@ async def test_authenticate_rejects_blocked_user() -> None:
     """Проверяет отказ в аутентификации заблокированного пользователя."""
     users = FakeUserRepository()
     credentials = FakeAuthCredentialsRepository()
-    user = await users.create(
-        User(email="user@example.com", status=UserStatus.BLOCKED)
-    )
+    user = await users.create(User(email="user@example.com", status=UserStatus.BLOCKED))
     await credentials.create(
         AuthCredentials(user_id=user.id, password_hash="hashed:valid-password")
     )
@@ -330,3 +346,33 @@ async def test_authenticate_rejects_blocked_user() -> None:
 
     with pytest.raises(InvalidCredentialsError):
         await use_case.execute(email="user@example.com", password="valid-password")
+
+
+async def test_get_current_user_returns_active_user() -> None:
+    """Проверяет получение активного текущего пользователя."""
+    users = FakeUserRepository()
+    user = await users.create(User(email="user@example.com"))
+    use_case = build_get_current_user_use_case(users)
+
+    current_user = await use_case.execute(user_id=user.id)
+
+    assert current_user == user
+
+
+async def test_get_current_user_rejects_missing_user() -> None:
+    """Проверяет отказ, если пользователь из access token не найден."""
+    users = FakeUserRepository()
+    use_case = build_get_current_user_use_case(users)
+
+    with pytest.raises(CurrentUserNotFoundError):
+        await use_case.execute(user_id=UUID("00000000-0000-0000-0000-000000000001"))
+
+
+async def test_get_current_user_rejects_blocked_user() -> None:
+    """Проверяет отказ для заблокированного текущего пользователя."""
+    users = FakeUserRepository()
+    user = await users.create(User(email="user@example.com", status=UserStatus.BLOCKED))
+    use_case = build_get_current_user_use_case(users)
+
+    with pytest.raises(CurrentUserBlockedError):
+        await use_case.execute(user_id=user.id)

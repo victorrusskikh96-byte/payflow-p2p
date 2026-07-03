@@ -14,9 +14,7 @@ class AuthCredentialsModel(Base):
     """Описывает ORM-представление учетных данных пользователя."""
 
     __tablename__ = "auth_credentials"
-    __table_args__ = (
-        UniqueConstraint("user_id", name="uq_auth_credentials_user_id"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", name="uq_auth_credentials_user_id"),)
 
     id: Mapped[UUID] = mapped_column(PostgresUUID(as_uuid=True), primary_key=True)
     user_id: Mapped[UUID] = mapped_column(
