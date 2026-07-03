@@ -1,0 +1,40 @@
+import pytest
+
+from payflow.modules.users.domain import EmptyUserEmailError, User, UserStatus
+
+
+def test_user_is_created_with_valid_email() -> None:
+    user = User(email="user@example.com")
+
+    assert user.email == "user@example.com"
+
+
+def test_user_email_is_normalized() -> None:
+    user = User(email="  User@Example.COM  ")
+
+    assert user.email == "user@example.com"
+
+
+@pytest.mark.parametrize("email", ["", "   "])
+def test_empty_user_email_is_forbidden(email: str) -> None:
+    with pytest.raises(EmptyUserEmailError):
+        User(email=email)
+
+
+def test_user_status_is_active_by_default() -> None:
+    user = User(email="user@example.com")
+
+    assert user.status is UserStatus.ACTIVE
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        UserStatus.BLOCKED,
+        UserStatus.PENDING_VERIFICATION,
+    ],
+)
+def test_user_can_be_created_with_non_default_status(status: UserStatus) -> None:
+    user = User(email="user@example.com", status=status)
+
+    assert user.status is status

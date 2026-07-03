@@ -9,6 +9,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from payflow.core.config import settings
+from payflow.modules.users.infrastructure import models as users_models
 from payflow.shared.infrastructure.database import Base
 
 config = context.config
@@ -17,6 +18,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+_ = users_models
 
 
 def get_database_url() -> str:

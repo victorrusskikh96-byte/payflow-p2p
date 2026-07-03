@@ -32,13 +32,45 @@ tests/integration/  Integration tests
 tests/e2e/          End-to-end tests
 ```
 
+## Current Status
+
+The project currently has the base persistence layer and the Users module foundation in place.
+
+Implemented so far:
+
+- Basic database infrastructure.
+- PostgreSQL infrastructure through Docker Compose.
+- Alembic migrations setup.
+- Shared SQLAlchemy Base.
+- Users module foundation.
+- User domain model.
+- User statuses: `ACTIVE`, `BLOCKED`, `PENDING_VERIFICATION`.
+- SQLAlchemy users model.
+- Alembic migration for the `users` table.
+- Users repository interface.
+- SQLAlchemy implementation of the users repository.
+- Unit tests for the users domain.
+- Integration tests for the users repository.
+
 ## Makefile Commands
 
 Basic development commands:
 
 - `make up` - start Docker Compose infrastructure.
-- `make run` - run the FastAPI app locally.
 - `make migrate` - apply Alembic migrations.
 - `make test` - run tests.
+- `make lint` - run Ruff linting.
+- `make typecheck` - run mypy type checks.
 - `make check` - run linting, type checks, and tests.
 - `make down` - stop Docker Compose infrastructure.
+
+Additional local command:
+
+- `make run` - run the FastAPI app locally.
+
+## Next Steps
+
+- Auth module foundation.
+- Password hashing.
+- Register/login flows.
+- JWT access and refresh tokens.
