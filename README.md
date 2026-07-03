@@ -31,3 +31,14 @@ tests/unit/         Unit tests
 tests/integration/  Integration tests
 tests/e2e/          End-to-end tests
 ```
+
+## Makefile Commands
+
+Basic development commands:
+
+- `make up` - start Docker Compose infrastructure.
+- `make run` - run the FastAPI app locally.
+- `make migrate` - apply Alembic migrations.
+- `make test` - run tests.
+- `make check` - run linting, type checks, and tests.
+- `make down` - stop Docker Compose infrastructure.

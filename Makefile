@@ -1,0 +1,37 @@
+.PHONY: up run migrate revision test lint format typecheck check down clean
+
+# Project and infrastructure
+up:
+	docker compose up -d
+
+run:
+	uv run uvicorn payflow.main:app --reload
+
+migrate:
+	uv run alembic upgrade head
+
+revision:
+	uv run alembic revision --autogenerate -m "$(m)"
+
+# Tests and checks
+test:
+	uv run pytest
+
+lint:
+	uv run ruff check .
+
+format:
+	uv run ruff format .
+
+typecheck:
+	uv run mypy
+
+check: lint typecheck test
+
+# Stop and cleanup
+down:
+	docker compose down
+
+clean:
+	find . -type d -name "__pycache__" -prune -exec rm -rf {} +
+	rm -rf .pytest_cache .ruff_cache .mypy_cache
