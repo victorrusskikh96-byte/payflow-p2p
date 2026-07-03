@@ -20,6 +20,10 @@ from payflow.modules.auth.infrastructure.models import (
     AuthSessionModel,
 )
 from payflow.modules.users.infrastructure.models import UserModel
+from payflow.modules.wallets.infrastructure.models import (
+    WalletBalanceModel,
+    WalletModel,
+)
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -77,7 +81,7 @@ def async_session_factory(
 async def clean_database(
     async_session_factory: async_sessionmaker[AsyncSession],
 ) -> AsyncIterator[None]:
-    """Очищает таблицы пользователей и auth-данных вокруг каждого теста.
+    """Очищает таблицы пользователей, auth-данных и кошельков вокруг теста.
 
     Args:
         async_session_factory: Фабрика асинхронных сессий.
@@ -86,6 +90,8 @@ async def clean_database(
         Асинхронный итератор управления очисткой базы.
     """
     async with async_session_factory() as session:
+        await session.execute(delete(WalletBalanceModel))
+        await session.execute(delete(WalletModel))
         await session.execute(delete(AuthSessionModel))
         await session.execute(delete(AuthCredentialsModel))
         await session.execute(delete(UserModel))
@@ -94,6 +100,8 @@ async def clean_database(
     yield
 
     async with async_session_factory() as session:
+        await session.execute(delete(WalletBalanceModel))
+        await session.execute(delete(WalletModel))
         await session.execute(delete(AuthSessionModel))
         await session.execute(delete(AuthCredentialsModel))
         await session.execute(delete(UserModel))

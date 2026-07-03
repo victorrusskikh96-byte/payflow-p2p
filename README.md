@@ -37,8 +37,9 @@ tests/e2e/          End-to-end tests
 ## Current Status
 
 The project currently has the base persistence layer, the Users module foundation,
-and the Auth module foundation in place. Auth is implemented at the domain,
-application, infrastructure, and HTTP API levels.
+the Auth module foundation, and the Wallets module foundation in place. Auth and
+Wallets are implemented at the domain, application, infrastructure, and HTTP API
+levels.
 
 Implemented so far:
 
@@ -79,11 +80,36 @@ Implemented so far:
 - Integration tests for auth registration and authentication flows.
 - Integration tests for auth session repository and token pair rotation flows.
 - E2E tests for auth health, register, login, refresh, logout, and current user API.
+- Wallets module foundation.
+- Wallet domain model.
+- Wallet belongs to a user.
+- Wallet has `currency` and `status`.
+- Wallet statuses: `ACTIVE`, `BLOCKED`, `CLOSED`.
+- SQLAlchemy wallets and wallet balance projection models.
+- Alembic migration for the `wallets` and `wallet_balances` tables.
+- Wallet repository interfaces.
+- SQLAlchemy implementation of wallet repositories.
+- Wallet application use cases for create, list own wallets, and get own wallet
+  by id.
+- Wallet API endpoints: `POST /wallets`, `GET /wallets/me`, and
+  `GET /wallets/{wallet_id}`.
+- Wallet endpoints require a valid JWT access token.
+- Wallet balance projection is created with zero `available_amount_minor` and
+  zero `locked_amount_minor`.
+- E2E tests for wallet creation, authentication requirement, duplicate currency
+  conflict, own wallet list, own wallet by id, and safe not found for another
+  user's wallet.
 
 Not implemented yet:
 
-- Protected routes.
-- Wallets module foundation.
+- Money movement.
+- Ledger module.
+- Deposits.
+- Transfers.
+
+Wallet balance projection is a read model for current wallet balance values. It
+is not a ledger. Crediting, debiting, and transfer logic are intentionally not
+implemented yet. Ledger will be the next stage.
 
 ## Makefile Commands
 
@@ -103,4 +129,4 @@ Basic development commands:
 
 ## Next Steps
 
-- Wallets module foundation.
+- Ledger module foundation.

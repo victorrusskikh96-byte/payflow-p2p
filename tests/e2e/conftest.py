@@ -22,6 +22,10 @@ from payflow.modules.auth.infrastructure.models import (
     AuthSessionModel,
 )
 from payflow.modules.users.infrastructure.models import UserModel
+from payflow.modules.wallets.infrastructure.models import (
+    WalletBalanceModel,
+    WalletModel,
+)
 
 
 @pytest.fixture(scope="session")
@@ -64,7 +68,7 @@ async def e2e_async_session_factory(
 async def clean_auth_database(
     e2e_async_session_factory: async_sessionmaker[AsyncSession],
 ) -> AsyncIterator[None]:
-    """Очищает таблицы пользователей и auth-данных вокруг API-теста.
+    """Очищает таблицы пользователей, auth-данных и кошельков вокруг API-теста.
 
     Args:
         e2e_async_session_factory: Фабрика асинхронных SQLAlchemy-сессий.
@@ -73,6 +77,8 @@ async def clean_auth_database(
         Асинхронный итератор управления очисткой базы.
     """
     async with e2e_async_session_factory() as session:
+        await session.execute(delete(WalletBalanceModel))
+        await session.execute(delete(WalletModel))
         await session.execute(delete(AuthSessionModel))
         await session.execute(delete(AuthCredentialsModel))
         await session.execute(delete(UserModel))
@@ -81,6 +87,8 @@ async def clean_auth_database(
     yield
 
     async with e2e_async_session_factory() as session:
+        await session.execute(delete(WalletBalanceModel))
+        await session.execute(delete(WalletModel))
         await session.execute(delete(AuthSessionModel))
         await session.execute(delete(AuthCredentialsModel))
         await session.execute(delete(UserModel))
