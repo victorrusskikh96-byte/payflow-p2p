@@ -1,8 +1,18 @@
+"""Мапперы между доменными пользователями и SQLAlchemy-моделями."""
+
 from payflow.modules.users.domain import User, UserStatus
 from payflow.modules.users.infrastructure.models import UserModel
 
 
 def user_entity_to_model(user: User) -> UserModel:
+    """Преобразует доменную сущность пользователя в ORM-модель.
+
+    Args:
+        user: Доменная сущность пользователя.
+
+    Returns:
+        SQLAlchemy-модель пользователя.
+    """
     return UserModel(
         id=user.id,
         email=user.email,
@@ -13,6 +23,14 @@ def user_entity_to_model(user: User) -> UserModel:
 
 
 def user_model_to_entity(user_model: UserModel) -> User:
+    """Преобразует ORM-модель пользователя в доменную сущность.
+
+    Args:
+        user_model: SQLAlchemy-модель пользователя.
+
+    Returns:
+        Доменная сущность пользователя.
+    """
     return User(
         id=user_model.id,
         email=user_model.email,

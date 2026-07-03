@@ -1,3 +1,5 @@
+"""Интеграционные тесты SQLAlchemy-репозитория пользователей."""
+
 from uuid import uuid4
 
 import pytest
@@ -10,6 +12,11 @@ from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepo
 
 
 async def test_create_user_in_postgresql(async_session: AsyncSession) -> None:
+    """Проверяет создание пользователя в PostgreSQL.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
     repository = SQLAlchemyUserRepository(async_session)
     user = User(email="NewUser@example.com")
 
@@ -23,6 +30,11 @@ async def test_create_user_in_postgresql(async_session: AsyncSession) -> None:
 
 
 async def test_get_user_by_id(async_session: AsyncSession) -> None:
+    """Проверяет получение пользователя по идентификатору.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
     repository = SQLAlchemyUserRepository(async_session)
     created_user = await repository.create(User(email="by-id@example.com"))
 
@@ -34,6 +46,11 @@ async def test_get_user_by_id(async_session: AsyncSession) -> None:
 async def test_get_user_by_id_returns_none_when_missing(
     async_session: AsyncSession,
 ) -> None:
+    """Проверяет None при поиске отсутствующего пользователя по id.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
     repository = SQLAlchemyUserRepository(async_session)
 
     found_user = await repository.get_by_id(uuid4())
@@ -42,6 +59,11 @@ async def test_get_user_by_id_returns_none_when_missing(
 
 
 async def test_get_user_by_email(async_session: AsyncSession) -> None:
+    """Проверяет получение пользователя по email без учета регистра.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
     repository = SQLAlchemyUserRepository(async_session)
     created_user = await repository.create(User(email="by-email@example.com"))
 
@@ -53,6 +75,11 @@ async def test_get_user_by_email(async_session: AsyncSession) -> None:
 async def test_get_user_by_email_returns_none_when_missing(
     async_session: AsyncSession,
 ) -> None:
+    """Проверяет None при поиске отсутствующего пользователя по email.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
     repository = SQLAlchemyUserRepository(async_session)
 
     found_user = await repository.get_by_email("missing@example.com")
@@ -61,6 +88,11 @@ async def test_get_user_by_email_returns_none_when_missing(
 
 
 async def test_email_unique_constraint(async_session: AsyncSession) -> None:
+    """Проверяет уникальность нормализованного email в базе.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
     repository = SQLAlchemyUserRepository(async_session)
     await repository.create(User(email="unique@example.com"))
 
@@ -69,6 +101,11 @@ async def test_email_unique_constraint(async_session: AsyncSession) -> None:
 
 
 async def test_exists_by_email(async_session: AsyncSession) -> None:
+    """Проверяет поиск существования пользователя по email.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
     repository = SQLAlchemyUserRepository(async_session)
 
     assert not await repository.exists_by_email("exists@example.com")

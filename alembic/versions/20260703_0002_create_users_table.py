@@ -1,4 +1,4 @@
-"""create_users_table
+"""Миграция создания таблицы пользователей.
 
 Revision ID: 0002
 Revises: 0001
@@ -20,6 +20,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    """Создает таблицу пользователей.
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: Если база данных отклоняет DDL-операцию.
+    """
     op.create_table(
         "users",
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -33,4 +38,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Удаляет таблицу пользователей.
+
+    Raises:
+        sqlalchemy.exc.SQLAlchemyError: Если база данных отклоняет DDL-операцию.
+    """
     op.drop_table("users")

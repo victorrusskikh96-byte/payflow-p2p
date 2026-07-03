@@ -1,3 +1,5 @@
+"""Доменная модель пользователя и его статусы."""
+
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -7,6 +9,8 @@ from payflow.modules.users.domain.exceptions import EmptyUserEmailError
 
 
 class UserStatus(StrEnum):
+    """Описывает возможные состояния пользователя в системе."""
+
     ACTIVE = "ACTIVE"
     BLOCKED = "BLOCKED"
     PENDING_VERIFICATION = "PENDING_VERIFICATION"
@@ -14,6 +18,8 @@ class UserStatus(StrEnum):
 
 @dataclass(slots=True, init=False)
 class User:
+    """Представляет пользователя и гарантирует нормализацию email."""
+
     id: UUID
     email: str
     status: UserStatus
@@ -29,6 +35,18 @@ class User:
         created_at: datetime | None = None,
         updated_at: datetime | None = None,
     ) -> None:
+        """Создает пользователя с нормализованным email и временными метками.
+
+        Args:
+            email: Email пользователя.
+            id: Идентификатор пользователя, если он уже существует.
+            status: Текущий статус пользователя.
+            created_at: Дата создания пользователя.
+            updated_at: Дата последнего обновления пользователя.
+
+        Raises:
+            EmptyUserEmailError: Если email пустой после нормализации.
+        """
         now = datetime.now(UTC)
 
         self.id = id if id is not None else uuid4()

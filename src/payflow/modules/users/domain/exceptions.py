@@ -1,6 +1,9 @@
+"""Доменные исключения модуля пользователей."""
+
+
 class UsersDomainError(Exception):
-    """Base exception for users domain errors."""
+    """Базовое исключение домена пользователей."""
 
 
 class EmptyUserEmailError(UsersDomainError):
-    """Raised when a user email is empty after normalization."""
+    """Сообщает, что email пользователя пустой после нормализации."""

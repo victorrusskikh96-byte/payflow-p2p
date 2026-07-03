@@ -1,3 +1,5 @@
+"""Настройка асинхронного подключения к базе данных."""
+
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
@@ -13,5 +15,10 @@ async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+    """Создает асинхронную SQLAlchemy-сессию для одного запроса.
+
+    Returns:
+        Асинхронный генератор с активной сессией базы данных.
+    """
     async with async_session_factory() as session:
         yield session

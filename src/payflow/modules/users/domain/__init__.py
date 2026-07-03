@@ -1,3 +1,5 @@
+"""Публичные доменные объекты модуля пользователей."""
+
 from payflow.modules.users.domain.exceptions import (
     EmptyUserEmailError,
     UsersDomainError,

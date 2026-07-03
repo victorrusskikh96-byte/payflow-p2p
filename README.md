@@ -13,6 +13,7 @@ Current stack:
 - PostgreSQL
 - SQLAlchemy
 - Alembic
+- Argon2 password hashing
 
 Planned stack:
 
@@ -34,7 +35,8 @@ tests/e2e/          End-to-end tests
 
 ## Current Status
 
-The project currently has the base persistence layer and the Users module foundation in place.
+The project currently has the base persistence layer, the Users module foundation,
+and the Auth module foundation in place.
 
 Implemented so far:
 
@@ -49,28 +51,39 @@ Implemented so far:
 - Alembic migration for the `users` table.
 - Users repository interface.
 - SQLAlchemy implementation of the users repository.
+- Auth module foundation.
+- Auth credentials domain model and repository interface.
+- SQLAlchemy auth credentials model and repository implementation.
+- Alembic migration for the `auth_credentials` table.
+- Password hashing through Argon2.
+- Register and authenticate application use cases.
+- `password_hash` is stored separately from `users` in `auth_credentials`.
 - Unit tests for the users domain.
+- Unit tests for password policy, password hashing, and auth use cases.
 - Integration tests for the users repository.
+- Integration tests for auth registration and authentication flows.
+
+Not implemented yet:
+
+- JWT access tokens.
+- Auth HTTP endpoints.
 
 ## Makefile Commands
 
 Basic development commands:
 
 - `make up` - start Docker Compose infrastructure.
+- `make run` - run the FastAPI app locally.
 - `make migrate` - apply Alembic migrations.
+- `make revision m="message"` - create a new Alembic revision.
 - `make test` - run tests.
 - `make lint` - run Ruff linting.
+- `make format` - format code with Ruff.
 - `make typecheck` - run mypy type checks.
 - `make check` - run linting, type checks, and tests.
 - `make down` - stop Docker Compose infrastructure.
-
-Additional local command:
-
-- `make run` - run the FastAPI app locally.
+- `make clean` - remove local Python/tool caches.
 
 ## Next Steps
 
-- Auth module foundation.
-- Password hashing.
-- Register/login flows.
-- JWT access and refresh tokens.
+- JWT authentication.

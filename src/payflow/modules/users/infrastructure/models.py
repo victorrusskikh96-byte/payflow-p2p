@@ -1,3 +1,5 @@
+"""SQLAlchemy-модель таблицы пользователей."""
+
 from datetime import datetime
 from uuid import UUID
 
@@ -9,6 +11,8 @@ from payflow.shared.infrastructure.database import Base
 
 
 class UserModel(Base):
+    """Описывает ORM-представление пользователя в базе данных."""
+
     __tablename__ = "users"
     __table_args__ = (UniqueConstraint("email", name="uq_users_email"),)
 

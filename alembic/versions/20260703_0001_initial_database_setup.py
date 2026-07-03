@@ -1,4 +1,4 @@
-"""initial_database_setup
+"""Начальная ревизия базы данных.
 
 Revision ID: 0001
 Revises:
@@ -16,8 +16,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    """Применяет начальную пустую ревизию."""
     pass
 
 
 def downgrade() -> None:
+    """Откатывает начальную пустую ревизию."""
     pass
