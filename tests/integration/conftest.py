@@ -15,7 +15,10 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from payflow.core.config import settings
-from payflow.modules.auth.infrastructure.models import AuthCredentialsModel
+from payflow.modules.auth.infrastructure.models import (
+    AuthCredentialsModel,
+    AuthSessionModel,
+)
 from payflow.modules.users.infrastructure.models import UserModel
 
 
@@ -74,7 +77,7 @@ def async_session_factory(
 async def clean_database(
     async_session_factory: async_sessionmaker[AsyncSession],
 ) -> AsyncIterator[None]:
-    """Очищает таблицы пользователей и учетных данных вокруг каждого теста.
+    """Очищает таблицы пользователей и auth-данных вокруг каждого теста.
 
     Args:
         async_session_factory: Фабрика асинхронных сессий.
@@ -83,6 +86,7 @@ async def clean_database(
         Асинхронный итератор управления очисткой базы.
     """
     async with async_session_factory() as session:
+        await session.execute(delete(AuthSessionModel))
         await session.execute(delete(AuthCredentialsModel))
         await session.execute(delete(UserModel))
         await session.commit()
@@ -90,6 +94,7 @@ async def clean_database(
     yield
 
     async with async_session_factory() as session:
+        await session.execute(delete(AuthSessionModel))
         await session.execute(delete(AuthCredentialsModel))
         await session.execute(delete(UserModel))
         await session.commit()

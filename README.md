@@ -14,6 +14,7 @@ Current stack:
 - SQLAlchemy
 - Alembic
 - Argon2 password hashing
+- PyJWT
 
 Planned stack:
 
@@ -36,7 +37,8 @@ tests/e2e/          End-to-end tests
 ## Current Status
 
 The project currently has the base persistence layer, the Users module foundation,
-and the Auth module foundation in place.
+and the Auth module foundation in place. Auth is implemented at the domain,
+application, and infrastructure levels; HTTP endpoints are intentionally not added yet.
 
 Implemented so far:
 
@@ -58,15 +60,26 @@ Implemented so far:
 - Password hashing through Argon2.
 - Register and authenticate application use cases.
 - `password_hash` is stored separately from `users` in `auth_credentials`.
+- JWT access token foundation.
+- Opaque refresh tokens with only token hashes stored in PostgreSQL.
+- Auth sessions through the `auth_sessions` table.
+- Token pair application DTO.
+- Issue token pair application use case.
+- Refresh token pair application use case with refresh token rotation.
+- Revoke refresh session application use case.
 - Unit tests for the users domain.
-- Unit tests for password policy, password hashing, and auth use cases.
+- Unit tests for password policy, password hashing, access tokens, refresh tokens,
+  auth sessions, and auth use cases.
 - Integration tests for the users repository.
 - Integration tests for auth registration and authentication flows.
+- Integration tests for auth session repository and token pair rotation flows.
 
 Not implemented yet:
 
-- JWT access tokens.
 - Auth HTTP endpoints.
+- Register/login HTTP API.
+- Current user dependency.
+- Protected routes.
 
 ## Makefile Commands
 
@@ -86,4 +99,6 @@ Basic development commands:
 
 ## Next Steps
 
-- JWT authentication.
+- Auth API endpoints.
+- Current user dependency.
+- Protected routes.

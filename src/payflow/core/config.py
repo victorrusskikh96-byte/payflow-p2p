@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     app_env: str = "local"
     debug: bool = False
     database_url: str = "postgresql+asyncpg://payflow:payflow@localhost:5432/payflow"
+    jwt_secret_key: str = "change-me-in-environment-for-local-development-only"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 30
 
 
 settings = Settings()
