@@ -13,6 +13,18 @@ class InvalidBalanceAmountError(WalletsDomainError):
     """Сообщает, что сумма в проекции баланса некорректна."""
 
 
+class InvalidBalanceUpdateError(WalletsDomainError):
+    """Сообщает, что обновление проекции баланса некорректно."""
+
+
+class InsufficientFundsError(WalletsDomainError):
+    """Сообщает, что доступного баланса недостаточно для операции."""
+
+
+class WalletBalanceNotFoundError(WalletsDomainError):
+    """Сообщает, что проекция баланса кошелька не найдена."""
+
+
 class WalletBlockedError(WalletsDomainError):
     """Сообщает, что операция невозможна для заблокированного кошелька."""
 

@@ -6,7 +6,9 @@ import pytest
 
 from payflow.modules.wallets.domain import (
     BalanceProjection,
+    InsufficientFundsError,
     InvalidBalanceAmountError,
+    InvalidBalanceUpdateError,
     InvalidWalletCurrencyError,
     Wallet,
     WalletStatus,
@@ -89,3 +91,69 @@ def test_negative_locked_amount_minor_is_forbidden() -> None:
             currency="USD",
             locked_amount_minor=-1,
         )
+
+
+def test_balance_projection_increases_available_amount() -> None:
+    """Проверяет увеличение доступного баланса."""
+    balance = BalanceProjection(wallet_id=uuid4(), currency="USD")
+
+    balance.increase_available_amount(100)
+
+    assert balance.available_amount_minor == 100
+    assert balance.locked_amount_minor == 0
+
+
+def test_balance_projection_decreases_available_amount() -> None:
+    """Проверяет уменьшение доступного баланса при достаточной сумме."""
+    balance = BalanceProjection(
+        wallet_id=uuid4(),
+        currency="USD",
+        available_amount_minor=100,
+    )
+
+    balance.decrease_available_amount(40)
+
+    assert balance.available_amount_minor == 60
+
+
+def test_balance_projection_rejects_decrease_below_zero() -> None:
+    """Проверяет запрет уменьшения доступного баланса ниже нуля."""
+    balance = BalanceProjection(
+        wallet_id=uuid4(),
+        currency="USD",
+        available_amount_minor=30,
+    )
+
+    with pytest.raises(InsufficientFundsError):
+        balance.decrease_available_amount(31)
+
+    assert balance.available_amount_minor == 30
+
+
+def test_balance_projection_rejects_non_positive_update_amount() -> None:
+    """Проверяет запрет неположительной суммы обновления."""
+    balance = BalanceProjection(wallet_id=uuid4(), currency="USD")
+
+    with pytest.raises(InvalidBalanceUpdateError):
+        balance.increase_available_amount(0)
+
+
+def test_balance_projection_checks_available_amount_sufficiency() -> None:
+    """Проверяет оценку достаточности доступного баланса."""
+    balance = BalanceProjection(
+        wallet_id=uuid4(),
+        currency="USD",
+        available_amount_minor=100,
+    )
+
+    assert balance.has_sufficient_available_balance(100)
+    assert not balance.has_sufficient_available_balance(101)
+
+
+def test_balance_projection_validation_rejects_negative_locked_amount() -> None:
+    """Проверяет валидацию отрицательной заблокированной суммы."""
+    balance = BalanceProjection(wallet_id=uuid4(), currency="USD")
+    balance.locked_amount_minor = -1
+
+    with pytest.raises(InvalidBalanceUpdateError):
+        balance.validate()

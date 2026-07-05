@@ -3,12 +3,19 @@
 from uuid import uuid4
 
 import pytest
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from payflow.modules.users.domain import User
 from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
-from payflow.modules.wallets.domain import BalanceProjection, Wallet, WalletStatus
+from payflow.modules.wallets.domain import (
+    BalanceProjection,
+    InsufficientFundsError,
+    InvalidBalanceUpdateError,
+    Wallet,
+    WalletStatus,
+)
 from payflow.modules.wallets.infrastructure.models import (
     WalletBalanceModel,
     WalletModel,
@@ -173,6 +180,232 @@ async def test_get_balance_projection_by_wallet_id(
     found_balance = await repository.get_by_wallet_id(wallet.id)
 
     assert found_balance == created_balance
+
+
+async def test_get_balance_projection_by_wallet_id_for_update(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет получение проекции баланса с row-level lock.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    wallet = await create_wallet(async_session, currency="USD")
+    repository = SQLAlchemyWalletBalanceRepository(async_session)
+    created_balance = await repository.create_initial(
+        BalanceProjection(wallet_id=wallet.id, currency=wallet.currency)
+    )
+
+    locked_balance = await repository.get_by_wallet_id_for_update(wallet.id)
+
+    assert locked_balance == created_balance
+
+
+async def test_get_balance_projection_for_update_locks_row(
+    async_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Проверяет, что SELECT FOR UPDATE блокирует строку баланса.
+
+    Args:
+        async_session_factory: Фабрика асинхронных SQLAlchemy-сессий.
+    """
+    async with async_session_factory() as setup_session:
+        wallet = await create_wallet(setup_session, currency="USD")
+        setup_repository = SQLAlchemyWalletBalanceRepository(setup_session)
+        await setup_repository.create_initial(
+            BalanceProjection(wallet_id=wallet.id, currency=wallet.currency)
+        )
+        await setup_session.commit()
+
+    locker_session = async_session_factory()
+    contender_session = async_session_factory()
+    try:
+        await locker_session.begin()
+        locker_repository = SQLAlchemyWalletBalanceRepository(locker_session)
+        await locker_repository.get_by_wallet_id_for_update(wallet.id)
+
+        await contender_session.begin()
+        await contender_session.execute(text("SET LOCAL lock_timeout = '100ms'"))
+        contender_repository = SQLAlchemyWalletBalanceRepository(contender_session)
+
+        with pytest.raises(DBAPIError):
+            await contender_repository.get_by_wallet_id_for_update(wallet.id)
+    finally:
+        await contender_session.rollback()
+        await locker_session.rollback()
+        await contender_session.close()
+        await locker_session.close()
+
+
+async def test_increase_available_balance(async_session: AsyncSession) -> None:
+    """Проверяет увеличение доступного баланса в PostgreSQL.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    wallet = await create_wallet(async_session, currency="USD")
+    repository = SQLAlchemyWalletBalanceRepository(async_session)
+    await repository.create_initial(
+        BalanceProjection(wallet_id=wallet.id, currency=wallet.currency)
+    )
+    balance = await repository.get_by_wallet_id_for_update(wallet.id)
+
+    updated_balance = await repository.increase_available_amount(balance, 150)
+
+    stored_balance = await async_session.get(WalletBalanceModel, wallet.id)
+    assert stored_balance is not None
+    assert updated_balance.available_amount_minor == 150
+    assert stored_balance.available_amount_minor == 150
+
+
+async def test_decrease_available_balance_with_sufficient_funds(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет уменьшение доступного баланса при достаточной сумме.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    wallet = await create_wallet(async_session, currency="USD")
+    repository = SQLAlchemyWalletBalanceRepository(async_session)
+    await repository.create_initial(
+        BalanceProjection(
+            wallet_id=wallet.id,
+            currency=wallet.currency,
+            available_amount_minor=150,
+        )
+    )
+    balance = await repository.get_by_wallet_id_for_update(wallet.id)
+
+    updated_balance = await repository.decrease_available_amount(balance, 40)
+
+    stored_balance = await async_session.get(WalletBalanceModel, wallet.id)
+    assert stored_balance is not None
+    assert updated_balance.available_amount_minor == 110
+    assert stored_balance.available_amount_minor == 110
+
+
+async def test_decrease_available_balance_rejects_negative_result(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет запрет уменьшения доступного баланса ниже нуля.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    wallet = await create_wallet(async_session, currency="USD")
+    repository = SQLAlchemyWalletBalanceRepository(async_session)
+    await repository.create_initial(
+        BalanceProjection(
+            wallet_id=wallet.id,
+            currency=wallet.currency,
+            available_amount_minor=30,
+        )
+    )
+    balance = await repository.get_by_wallet_id_for_update(wallet.id)
+
+    with pytest.raises(InsufficientFundsError):
+        await repository.decrease_available_amount(balance, 31)
+
+    stored_balance = await async_session.get(WalletBalanceModel, wallet.id)
+    assert stored_balance is not None
+    assert stored_balance.available_amount_minor == 30
+
+
+async def test_has_sufficient_available_balance(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет репозиторную проверку достаточности доступного баланса.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    wallet = await create_wallet(async_session, currency="USD")
+    repository = SQLAlchemyWalletBalanceRepository(async_session)
+    await repository.create_initial(
+        BalanceProjection(
+            wallet_id=wallet.id,
+            currency=wallet.currency,
+            available_amount_minor=50,
+        )
+    )
+
+    assert await repository.has_sufficient_available_balance(wallet.id, 50)
+    assert not await repository.has_sufficient_available_balance(wallet.id, 51)
+
+
+async def test_save_rejects_negative_locked_balance(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет запрет отрицательного locked balance при сохранении.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    wallet = await create_wallet(async_session, currency="USD")
+    repository = SQLAlchemyWalletBalanceRepository(async_session)
+    await repository.create_initial(
+        BalanceProjection(wallet_id=wallet.id, currency=wallet.currency)
+    )
+    balance = await repository.get_by_wallet_id_for_update(wallet.id)
+    balance.locked_amount_minor = -1
+
+    with pytest.raises(InvalidBalanceUpdateError):
+        await repository.save(balance)
+
+    stored_balance = await async_session.get(WalletBalanceModel, wallet.id)
+    assert stored_balance is not None
+    assert stored_balance.locked_amount_minor == 0
+
+
+async def test_save_rejects_currency_mismatch_with_wallet(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет запрет рассинхронизации валюты баланса и кошелька.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    wallet = await create_wallet(async_session, currency="USD")
+    repository = SQLAlchemyWalletBalanceRepository(async_session)
+    await repository.create_initial(
+        BalanceProjection(wallet_id=wallet.id, currency=wallet.currency)
+    )
+    balance = await repository.get_by_wallet_id_for_update(wallet.id)
+    balance.currency = "EUR"
+
+    with pytest.raises(InvalidBalanceUpdateError):
+        await repository.save(balance)
+
+
+async def test_balance_update_is_persisted_after_commit(
+    async_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Проверяет сохранение обновленной проекции после commit.
+
+    Args:
+        async_session_factory: Фабрика асинхронных SQLAlchemy-сессий.
+    """
+    async with async_session_factory() as setup_session:
+        wallet = await create_wallet(setup_session, currency="USD")
+        setup_repository = SQLAlchemyWalletBalanceRepository(setup_session)
+        await setup_repository.create_initial(
+            BalanceProjection(wallet_id=wallet.id, currency=wallet.currency)
+        )
+        await setup_session.commit()
+
+    async with async_session_factory() as update_session:
+        update_repository = SQLAlchemyWalletBalanceRepository(update_session)
+        balance = await update_repository.get_by_wallet_id_for_update(wallet.id)
+        await update_repository.increase_available_amount(balance, 250)
+        await update_session.commit()
+
+    async with async_session_factory() as read_session:
+        read_repository = SQLAlchemyWalletBalanceRepository(read_session)
+        stored_balance = await read_repository.get_by_wallet_id(wallet.id)
+
+    assert stored_balance is not None
+    assert stored_balance.available_amount_minor == 250
 
 
 async def test_wallet_requires_existing_user(async_session: AsyncSession) -> None:

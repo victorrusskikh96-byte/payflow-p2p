@@ -9,7 +9,14 @@ from payflow.modules.wallets.application.repositories import (
     WalletBalanceRepository,
     WalletRepository,
 )
-from payflow.modules.wallets.domain import BalanceProjection, Wallet, normalize_currency
+from payflow.modules.wallets.domain import (
+    BalanceProjection,
+    InvalidBalanceUpdateError,
+    Wallet,
+    WalletBalanceNotFoundError,
+    WalletNotFoundError,
+    normalize_currency,
+)
 from payflow.modules.wallets.infrastructure.mappers import (
     balance_entity_to_model,
     balance_model_to_entity,
@@ -151,7 +158,13 @@ class SQLAlchemyWalletBalanceRepository(WalletBalanceRepository):
 
         Returns:
             Сохраненная проекция баланса.
+
+        Raises:
+            InvalidBalanceUpdateError: Если валюта баланса не совпадает с валютой
+                кошелька.
+            WalletNotFoundError: Если кошелек для проекции не найден.
         """
+        await self._ensure_currency_matches_wallet(balance)
         balance_model = balance_entity_to_model(balance)
         self._session.add(balance_model)
         await self._session.flush()
@@ -171,6 +184,127 @@ class SQLAlchemyWalletBalanceRepository(WalletBalanceRepository):
             return None
         return balance_model_to_entity(balance_model)
 
+    async def get_by_wallet_id_for_update(
+        self,
+        wallet_id: UUID,
+    ) -> BalanceProjection:
+        """Возвращает проекцию баланса с PostgreSQL row-level lock.
+
+        Args:
+            wallet_id: Идентификатор кошелька.
+
+        Returns:
+            Заблокированная проекция баланса.
+
+        Raises:
+            WalletBalanceNotFoundError: Если запись проекции баланса не найдена.
+        """
+        statement = (
+            select(WalletBalanceModel)
+            .where(WalletBalanceModel.wallet_id == wallet_id)
+            .with_for_update()
+        )
+        balance_model = await self._session.scalar(statement)
+        if balance_model is None:
+            raise WalletBalanceNotFoundError("Wallet balance was not found.")
+        return balance_model_to_entity(balance_model)
+
+    async def increase_available_amount(
+        self,
+        balance: BalanceProjection,
+        amount_minor: int,
+    ) -> BalanceProjection:
+        """Увеличивает и сохраняет доступный баланс.
+
+        Args:
+            balance: Загруженная проекция баланса.
+            amount_minor: Сумма увеличения в минорных единицах.
+
+        Returns:
+            Сохраненная проекция баланса.
+
+        Raises:
+            InvalidBalanceUpdateError: Если обновление некорректно.
+            WalletBalanceNotFoundError: Если запись проекции баланса не найдена.
+        """
+        balance.increase_available_amount(amount_minor)
+        return await self.save(balance)
+
+    async def decrease_available_amount(
+        self,
+        balance: BalanceProjection,
+        amount_minor: int,
+    ) -> BalanceProjection:
+        """Уменьшает и сохраняет доступный баланс.
+
+        Args:
+            balance: Загруженная проекция баланса.
+            amount_minor: Сумма уменьшения в минорных единицах.
+
+        Returns:
+            Сохраненная проекция баланса.
+
+        Raises:
+            InsufficientFundsError: Если доступного баланса недостаточно.
+            InvalidBalanceUpdateError: Если обновление некорректно.
+            WalletBalanceNotFoundError: Если запись проекции баланса не найдена.
+        """
+        balance.decrease_available_amount(amount_minor)
+        return await self.save(balance)
+
+    async def has_sufficient_available_balance(
+        self,
+        wallet_id: UUID,
+        amount_minor: int,
+    ) -> bool:
+        """Проверяет достаточность доступного баланса кошелька.
+
+        Args:
+            wallet_id: Идентификатор кошелька.
+            amount_minor: Проверяемая сумма в минорных единицах.
+
+        Returns:
+            True, если доступного баланса достаточно.
+
+        Raises:
+            InvalidBalanceUpdateError: Если проверяемая сумма отрицательная.
+            WalletBalanceNotFoundError: Если запись проекции баланса не найдена.
+        """
+        balance = await self.get_by_wallet_id(wallet_id)
+        if balance is None:
+            raise WalletBalanceNotFoundError("Wallet balance was not found.")
+        return balance.has_sufficient_available_balance(amount_minor)
+
+    async def save(self, balance: BalanceProjection) -> BalanceProjection:
+        """Сохраняет обновленную проекцию баланса кошелька.
+
+        Args:
+            balance: Доменная проекция баланса.
+
+        Returns:
+            Сохраненная проекция баланса.
+
+        Raises:
+            InvalidBalanceUpdateError: Если проекция нарушает инварианты или ее
+                валюта не совпадает с валютой кошелька.
+            WalletBalanceNotFoundError: Если запись проекции баланса не найдена.
+            WalletNotFoundError: Если кошелек для проекции не найден.
+        """
+        balance.validate()
+        await self._ensure_currency_matches_wallet(balance)
+
+        balance_model = await self._session.get(WalletBalanceModel, balance.wallet_id)
+        if balance_model is None:
+            raise WalletBalanceNotFoundError("Wallet balance was not found.")
+
+        balance_model.available_amount_minor = balance.available_amount_minor
+        balance_model.locked_amount_minor = balance.locked_amount_minor
+        balance_model.currency = balance.currency
+        balance_model.updated_at = balance.updated_at
+
+        await self._session.flush()
+        return balance_model_to_entity(balance_model)
+
     async def update(self, balance: BalanceProjection) -> BalanceProjection:
         """Обновляет сохраненную проекцию баланса кошелька.
 
@@ -179,16 +313,27 @@ class SQLAlchemyWalletBalanceRepository(WalletBalanceRepository):
 
         Returns:
             Обновленная проекция баланса.
-        """
-        balance_model = await self._session.get(WalletBalanceModel, balance.wallet_id)
-        if balance_model is None:
-            balance_model = balance_entity_to_model(balance)
-            self._session.add(balance_model)
-        else:
-            balance_model.available_amount_minor = balance.available_amount_minor
-            balance_model.locked_amount_minor = balance.locked_amount_minor
-            balance_model.currency = balance.currency
-            balance_model.updated_at = balance.updated_at
 
-        await self._session.flush()
-        return balance_model_to_entity(balance_model)
+        Raises:
+            InvalidBalanceUpdateError: Если проекция нарушает инварианты.
+            WalletBalanceNotFoundError: Если запись проекции баланса не найдена.
+        """
+        return await self.save(balance)
+
+    async def _ensure_currency_matches_wallet(
+        self,
+        balance: BalanceProjection,
+    ) -> None:
+        wallet_currency = await self._session.scalar(
+            select(WalletModel.currency).where(WalletModel.id == balance.wallet_id)
+        )
+        if wallet_currency is None:
+            raise WalletNotFoundError("Wallet was not found.")
+
+        normalized_wallet_currency = normalize_currency(wallet_currency)
+        normalized_balance_currency = normalize_currency(balance.currency)
+        if normalized_balance_currency != normalized_wallet_currency:
+            raise InvalidBalanceUpdateError(
+                "Balance currency must match wallet currency."
+            )
+        balance.currency = normalized_balance_currency

@@ -44,6 +44,11 @@ PayFlow P2P - pet-проект приближенного к production финт
 - Проекция баланса wallet.
 - Ledger transactions и неизменяемые ledger entries.
 - Валидация double-entry accounting.
+- Internal deposit operation на application level.
+- Атомарное обновление ledger и wallet balance projection.
+- Row-level locking для wallet balances.
+- Защита от недостаточного баланса source funding wallet.
+- Идемпотентность internal deposit по `operation_id`.
 - Unit, integration и end-to-end тесты для реализованных сценариев.
 
 ## Технологический стек
@@ -218,34 +223,55 @@ PostgreSQL является источником истины для посто�
 4. Смешивание currencies внутри одной ledger transaction отклоняется.
 5. Ledger records сохраняются как неизменяемые записи.
 
+### D. Internal Deposit
+
+Internal deposit - это внутренний application-level сценарий. Он не является
+публичным payment provider API и не моделирует интеграцию с внешним платежным
+провайдером.
+
+1. Операция принимает source funding wallet и target user wallet.
+2. Ledger создает balanced transaction:
+   - `DEBIT` source wallet.
+   - `CREDIT` target wallet.
+3. Wallets обновляет balance projection:
+   - source `available` уменьшается.
+   - target `available` увеличивается.
+4. Source balance блокируется на уровне строки, чтобы конкурентные операции
+   не могли потратить один и тот же available balance.
+5. Если source funding wallet не имеет достаточного available balance,
+   операция отклоняется.
+6. Ledger posting и обновление wallet balances выполняются атомарно в одной
+   PostgreSQL transaction.
+7. При ошибке частичные изменения не сохраняются.
+
 ## Сценарии использования
 
-### Успешный сценарий: регистрация пользователя, создание wallet и валидный ledger posting
+### Успешный сценарий: регистрация пользователя, создание wallet и internal deposit
 
 1. Пользователь регистрируется с email и password.
 2. Auth создает user identity и credentials.
 3. Пользователь получает access и refresh tokens.
 4. Пользователь создает RUB wallet.
-5. Wallet balance projection начинается с нуля.
-6. Ledger transaction публикуется со сбалансированными `DEBIT` и `CREDIT`
-   entries.
-7. Ledger transaction принимается и коммитится.
+5. Internal funding wallet имеет available balance.
+6. Internal deposit публикует balanced ledger transaction:
+   `DEBIT` source funding wallet и `CREDIT` target user wallet.
+7. Wallet balance projection обновляется в той же PostgreSQL transaction.
+8. Target user wallet получает увеличение available balance.
 
-Публичные API для deposit и transfer пока не реализованы. Ledger posting уже
-реализован на уровнях domain и application.
+Публичные API для deposit и transfer пока не реализованы. Internal deposit
+реализован как внутренний application-level сценарий.
 
-### Неуспешный сценарий: несбалансированная ledger transaction
+### Неуспешный сценарий: недостаточный баланс source funding wallet
 
-1. Слой application пытается опубликовать ledger transaction.
-2. Сумма `DEBIT` равна `10000`.
-3. Сумма `CREDIT` равна `9000`.
-4. Ledger обнаруживает, что transaction не сбалансирована.
-5. Transaction отклоняется.
-6. Невалидные ledger records не сохраняются.
+1. Слой application пытается выполнить internal deposit.
+2. Source funding wallet не имеет достаточного available balance.
+3. Операция отклоняется до сохранения финансового движения.
+4. Ledger transaction не сохраняется.
+5. Target wallet balance не изменяется.
 
-Дополнительные ошибочные сценарии включают дублирование wallet currency для
-одного и того же пользователя, invalid password, а также invalid или expired
-refresh token.
+Дополнительные ошибочные сценарии включают несбалансированную ledger
+transaction, дублирование wallet currency для одного и того же пользователя,
+invalid password, а также invalid или expired refresh token.
 
 ## Обзор API
 
@@ -293,25 +319,24 @@ make test
 - Auth API.
 - Wallets.
 - Базовая основа Ledger.
+- Internal deposit operation.
 
 Пока не реализовано:
 
-- Обновление wallet balance projection из ledger entries.
-- Зачисление и списание для wallet balances.
-- Deposits.
 - Оркестрация P2P transfers.
+- Публичный deposit API.
+- Интеграция с external payment provider.
 
 Wallet balance projection - это read model для текущих значений баланса wallet.
-Это не ledger. Сценарий ledger posting создает только ledger records и пока не
-обновляет wallet balance projection.
+Это не ledger. Internal deposit атомарно создает ledger records и обновляет
+wallet balance projection внутри одной PostgreSQL transaction.
 
 ## План развития
 
 Дальше:
 
-- Внутренняя операция deposit.
 - P2P transfers.
-- Идемпотентность.
+- Идемпотентность для external operations.
 - Outbox pattern.
 - Kafka.
 - Redis.

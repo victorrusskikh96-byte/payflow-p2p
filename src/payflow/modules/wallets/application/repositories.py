@@ -99,6 +99,94 @@ class WalletBalanceRepository(Protocol):
             Проекция баланса или None, если она не найдена.
         """
 
+    async def get_by_wallet_id_for_update(
+        self,
+        wallet_id: UUID,
+    ) -> BalanceProjection:
+        """Возвращает проекцию баланса с row-level lock.
+
+        Args:
+            wallet_id: Идентификатор кошелька.
+
+        Returns:
+            Заблокированная проекция баланса.
+
+        Raises:
+            WalletBalanceNotFoundError: Если проекция баланса не найдена.
+        """
+
+    async def increase_available_amount(
+        self,
+        balance: BalanceProjection,
+        amount_minor: int,
+    ) -> BalanceProjection:
+        """Увеличивает и сохраняет доступный баланс.
+
+        Args:
+            balance: Заблокированная или загруженная проекция баланса.
+            amount_minor: Сумма увеличения в минорных единицах.
+
+        Returns:
+            Сохраненная проекция баланса.
+
+        Raises:
+            InvalidBalanceUpdateError: Если обновление некорректно.
+            WalletBalanceNotFoundError: Если проекция баланса не найдена.
+        """
+
+    async def decrease_available_amount(
+        self,
+        balance: BalanceProjection,
+        amount_minor: int,
+    ) -> BalanceProjection:
+        """Уменьшает и сохраняет доступный баланс.
+
+        Args:
+            balance: Заблокированная или загруженная проекция баланса.
+            amount_minor: Сумма уменьшения в минорных единицах.
+
+        Returns:
+            Сохраненная проекция баланса.
+
+        Raises:
+            InsufficientFundsError: Если доступного баланса недостаточно.
+            InvalidBalanceUpdateError: Если обновление некорректно.
+            WalletBalanceNotFoundError: Если проекция баланса не найдена.
+        """
+
+    async def has_sufficient_available_balance(
+        self,
+        wallet_id: UUID,
+        amount_minor: int,
+    ) -> bool:
+        """Проверяет достаточность доступного баланса кошелька.
+
+        Args:
+            wallet_id: Идентификатор кошелька.
+            amount_minor: Проверяемая сумма в минорных единицах.
+
+        Returns:
+            True, если доступного баланса достаточно.
+
+        Raises:
+            InvalidBalanceUpdateError: Если проверяемая сумма отрицательная.
+            WalletBalanceNotFoundError: Если проекция баланса не найдена.
+        """
+
+    async def save(self, balance: BalanceProjection) -> BalanceProjection:
+        """Сохраняет обновленную проекцию баланса.
+
+        Args:
+            balance: Обновленная доменная проекция баланса.
+
+        Returns:
+            Сохраненная проекция баланса.
+
+        Raises:
+            InvalidBalanceUpdateError: Если проекция нарушает инварианты.
+            WalletBalanceNotFoundError: Если проекция баланса не найдена.
+        """
+
     async def update(self, balance: BalanceProjection) -> BalanceProjection:
         """Обновляет сохраненную проекцию баланса кошелька.
 
@@ -107,4 +195,8 @@ class WalletBalanceRepository(Protocol):
 
         Returns:
             Обновленная проекция баланса.
+
+        Raises:
+            InvalidBalanceUpdateError: Если проекция нарушает инварианты.
+            WalletBalanceNotFoundError: Если проекция баланса не найдена.
         """
