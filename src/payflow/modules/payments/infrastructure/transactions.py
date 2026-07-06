@@ -3,6 +3,7 @@
 from types import TracebackType
 
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncSessionTransaction
+from sqlalchemy.orm import SessionTransactionOrigin
 
 
 class SQLAlchemyTransactionManager:
@@ -20,8 +21,13 @@ class SQLAlchemyTransactionManager:
 
     async def __aenter__(self) -> None:
         """Открывает транзакцию базы данных или переиспользует активную."""
-        if self._session.in_transaction():
-            self._started_transaction = False
+        current_transaction = self._session.get_transaction()
+        if current_transaction is not None:
+            sync_transaction = current_transaction.sync_transaction
+            self._started_transaction = (
+                sync_transaction is not None
+                and sync_transaction.origin is SessionTransactionOrigin.AUTOBEGIN
+            )
             return
 
         self._transaction = self._session.begin()
@@ -50,6 +56,10 @@ class SQLAlchemyTransactionManager:
         try:
             if self._transaction is not None:
                 await self._transaction.__aexit__(exc_type, exc, traceback)
+            elif exc_type is None:
+                await self._session.commit()
+            else:
+                await self._session.rollback()
         finally:
             self._transaction = None
             self._started_transaction = False

@@ -478,16 +478,26 @@ class FakeTransactionManager:
         return None
 
 
-def make_wallet(*, currency: str = "USD") -> Wallet:
+def make_wallet(
+    *,
+    wallet_id: UUID | None = None,
+    currency: str = "USD",
+) -> Wallet:
     """Создает кошелек для unit-теста.
 
     Args:
+        wallet_id: Явный идентификатор кошелька.
         currency: Код валюты кошелька.
 
     Returns:
         Доменный кошелек.
     """
-    return Wallet(user_id=uuid4(), currency=currency, status=WalletStatus.ACTIVE)
+    return Wallet(
+        id=wallet_id,
+        user_id=uuid4(),
+        currency=currency,
+        status=WalletStatus.ACTIVE,
+    )
 
 
 def make_use_case(
@@ -746,3 +756,53 @@ async def test_successful_internal_deposit_updates_balances() -> None:
     assert result.target_balance.available_amount_minor == 145
     assert balances.balances[source_wallet.id].available_amount_minor == 375
     assert balances.balances[target_wallet.id].available_amount_minor == 145
+
+
+@pytest.mark.parametrize(
+    ("source_wallet_id", "target_wallet_id"),
+    [
+        (
+            UUID("00000000-0000-0000-0000-000000000001"),
+            UUID("00000000-0000-0000-0000-000000000002"),
+        ),
+        (
+            UUID("00000000-0000-0000-0000-000000000002"),
+            UUID("00000000-0000-0000-0000-000000000001"),
+        ),
+    ],
+)
+async def test_internal_deposit_locks_balances_by_wallet_id(
+    source_wallet_id: UUID,
+    target_wallet_id: UUID,
+) -> None:
+    """Проверяет стабильный порядок locks и корректный результат.
+
+    Args:
+        source_wallet_id: Идентификатор source wallet.
+        target_wallet_id: Идентификатор target wallet.
+    """
+    source_wallet = make_wallet(wallet_id=source_wallet_id)
+    target_wallet = make_wallet(wallet_id=target_wallet_id)
+    use_case, _, balances, _, _, _ = make_use_case(
+        source_wallet=source_wallet,
+        target_wallet=target_wallet,
+        source_balance_amount_minor=500,
+        target_balance_amount_minor=20,
+    )
+
+    result = await use_case.execute(
+        operation_id=uuid4(),
+        source_wallet_id=source_wallet.id,
+        target_wallet_id=target_wallet.id,
+        amount_minor=100,
+        currency="USD",
+    )
+
+    assert balances.locked_wallet_ids == sorted(
+        [source_wallet.id, target_wallet.id],
+        key=lambda wallet_id: wallet_id.int,
+    )
+    assert result.source_balance.available_amount_minor == 400
+    assert result.target_balance.available_amount_minor == 120
+    assert balances.balances[source_wallet.id].available_amount_minor == 400
+    assert balances.balances[target_wallet.id].available_amount_minor == 120

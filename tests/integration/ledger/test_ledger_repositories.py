@@ -8,6 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from payflow.modules.ledger.application.exceptions import (
+    LedgerTransactionAlreadyExistsError,
+)
 from payflow.modules.ledger.domain import (
     LedgerEntry,
     LedgerEntryDirection,
@@ -219,8 +222,10 @@ async def test_get_ledger_entries_by_wallet_id(async_session: AsyncSession) -> N
     assert entries[0] in target_transaction.entries
 
 
-async def test_operation_id_unique_constraint(async_session: AsyncSession) -> None:
-    """Проверяет unique constraint на operation_id.
+async def test_operation_id_unique_constraint_is_wrapped(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed error для unique constraint на operation_id.
 
     Args:
         async_session: Асинхронная SQLAlchemy-сессия.
@@ -237,7 +242,7 @@ async def test_operation_id_unique_constraint(async_session: AsyncSession) -> No
         ),
     )
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(LedgerTransactionAlreadyExistsError):
         await repository.create(
             make_ledger_transaction(
                 debit_wallet_id=debit_wallet.id,

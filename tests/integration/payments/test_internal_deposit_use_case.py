@@ -69,6 +69,23 @@ class FailingTargetSaveWalletBalanceRepository(SQLAlchemyWalletBalanceRepository
         return await super().save(balance)
 
 
+class StaleDuplicateCheckLedgerTransactionRepository(
+    SQLAlchemyLedgerTransactionRepository
+):
+    """Имитирует промах application-level duplicate check."""
+
+    async def exists_by_operation_id(self, operation_id: UUID) -> bool:
+        """Всегда сообщает, что ledger transaction с operation_id отсутствует.
+
+        Args:
+            operation_id: Идентификатор бизнес-операции.
+
+        Returns:
+            False, чтобы тест дошел до database-level unique constraint.
+        """
+        return False
+
+
 async def create_user(async_session: AsyncSession) -> User:
     """Создает пользователя для integration-теста payments.
 
@@ -151,6 +168,28 @@ def make_use_case_with_failing_balance_save(
             failed_wallet_id=failed_wallet_id,
         ),
         ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_use_case_with_stale_duplicate_check(
+    async_session: AsyncSession,
+) -> InternalDepositUseCase:
+    """Создает use case с промахом duplicate check ledger repository.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+
+    Returns:
+        Use case internal deposit.
+    """
+    return InternalDepositUseCase(
+        wallets=SQLAlchemyWalletRepository(async_session),
+        balances=SQLAlchemyWalletBalanceRepository(async_session),
+        ledger_transactions=StaleDuplicateCheckLedgerTransactionRepository(
+            async_session
+        ),
         outbox_events=SQLAlchemyOutboxEventRepository(async_session),
         transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
@@ -377,6 +416,51 @@ async def test_duplicate_operation_id_is_rejected(
 
     with pytest.raises(DuplicateInternalDepositOperationError):
         await use_case.execute(
+            operation_id=operation_id,
+            source_wallet_id=source_wallet.id,
+            target_wallet_id=target_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert await count_ledger_transactions(async_session) == 1
+    assert await count_ledger_entries(async_session) == 2
+    assert (
+        await count_outbox_events(
+            async_session,
+            event_type="internal_deposit.completed",
+        )
+        == 1
+    )
+    assert await get_available_balance(async_session, source_wallet.id) == 900
+    assert await get_available_balance(async_session, target_wallet.id) == 100
+
+
+async def test_database_duplicate_operation_id_is_wrapped_without_side_effects(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed duplicate error при срабатывании DB unique constraint.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    source_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=1_000,
+    )
+    target_wallet = await create_wallet_with_balance(async_session)
+    await async_session.commit()
+    operation_id = uuid4()
+    await make_use_case(async_session).execute(
+        operation_id=operation_id,
+        source_wallet_id=source_wallet.id,
+        target_wallet_id=target_wallet.id,
+        amount_minor=100,
+        currency="USD",
+    )
+
+    with pytest.raises(DuplicateInternalDepositOperationError):
+        await make_use_case_with_stale_duplicate_check(async_session).execute(
             operation_id=operation_id,
             source_wallet_id=source_wallet.id,
             target_wallet_id=target_wallet.id,

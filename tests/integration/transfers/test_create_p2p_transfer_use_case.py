@@ -7,8 +7,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payflow.modules.ledger.domain import (
+    LedgerEntry,
     LedgerEntryDirection,
     LedgerOperationType,
+    LedgerTransaction,
 )
 from payflow.modules.ledger.infrastructure.models import (
     LedgerEntryModel,
@@ -77,6 +79,38 @@ class FailingRecipientSaveWalletBalanceRepository(SQLAlchemyWalletBalanceReposit
         if balance.wallet_id == self._failed_wallet_id:
             raise RuntimeError("Forced recipient balance save failure.")
         return await super().save(balance)
+
+
+class StaleDuplicateCheckTransferRepository(SQLAlchemyTransferRepository):
+    """Имитирует промах application-level duplicate check для transfers."""
+
+    async def exists_by_operation_id(self, operation_id: UUID) -> bool:
+        """Всегда сообщает, что transfer с operation_id отсутствует.
+
+        Args:
+            operation_id: Идентификатор бизнес-операции.
+
+        Returns:
+            False, чтобы тест дошел до database-level unique constraint.
+        """
+        return False
+
+
+class StaleDuplicateCheckLedgerTransactionRepository(
+    SQLAlchemyLedgerTransactionRepository
+):
+    """Имитирует промах application-level duplicate check для ledger."""
+
+    async def exists_by_operation_id(self, operation_id: UUID) -> bool:
+        """Всегда сообщает, что ledger transaction с operation_id отсутствует.
+
+        Args:
+            operation_id: Идентификатор бизнес-операции.
+
+        Returns:
+            False, чтобы тест дошел до database-level unique constraint.
+        """
+        return False
 
 
 async def create_user(async_session: AsyncSession) -> User:
@@ -171,6 +205,96 @@ def make_use_case_with_failing_balance_save(
         ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
         outbox_events=SQLAlchemyOutboxEventRepository(async_session),
         transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_use_case_with_stale_duplicate_check(
+    async_session: AsyncSession,
+) -> CreateP2PTransferUseCase:
+    """Создает use case с промахом duplicate check transfer repository.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+
+    Returns:
+        Use case P2P-перевода.
+    """
+    return CreateP2PTransferUseCase(
+        transfers=StaleDuplicateCheckTransferRepository(async_session),
+        wallets=SQLAlchemyWalletRepository(async_session),
+        balances=SQLAlchemyWalletBalanceRepository(async_session),
+        ledger_transactions=StaleDuplicateCheckLedgerTransactionRepository(
+            async_session
+        ),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_use_case_with_stale_ledger_duplicate_check(
+    async_session: AsyncSession,
+) -> CreateP2PTransferUseCase:
+    """Создает use case с промахом duplicate check ledger repository.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+
+    Returns:
+        Use case P2P-перевода.
+    """
+    return CreateP2PTransferUseCase(
+        transfers=SQLAlchemyTransferRepository(async_session),
+        wallets=SQLAlchemyWalletRepository(async_session),
+        balances=SQLAlchemyWalletBalanceRepository(async_session),
+        ledger_transactions=StaleDuplicateCheckLedgerTransactionRepository(
+            async_session
+        ),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_ledger_transaction(
+    *,
+    operation_id: UUID,
+    sender_wallet_id: UUID,
+    recipient_wallet_id: UUID,
+    amount_minor: int,
+    currency: str,
+) -> LedgerTransaction:
+    """Создает ledger transaction для regression-теста duplicate operation_id.
+
+    Args:
+        operation_id: Идентификатор бизнес-операции.
+        sender_wallet_id: Идентификатор кошелька отправителя.
+        recipient_wallet_id: Идентификатор кошелька получателя.
+        amount_minor: Сумма в минорных единицах.
+        currency: Валюта операции.
+
+    Returns:
+        Сбалансированная ledger transaction.
+    """
+    transaction_id = uuid4()
+    return LedgerTransaction(
+        id=transaction_id,
+        operation_id=operation_id,
+        operation_type=LedgerOperationType.P2P_TRANSFER,
+        entries=(
+            LedgerEntry(
+                transaction_id=transaction_id,
+                wallet_id=sender_wallet_id,
+                direction=LedgerEntryDirection.DEBIT,
+                amount_minor=amount_minor,
+                currency=currency,
+            ),
+            LedgerEntry(
+                transaction_id=transaction_id,
+                wallet_id=recipient_wallet_id,
+                direction=LedgerEntryDirection.CREDIT,
+                amount_minor=amount_minor,
+                currency=currency,
+            ),
+        ),
     )
 
 
@@ -458,6 +582,97 @@ async def test_duplicate_operation_id_is_rejected(
     assert await get_available_balance(async_session, recipient_wallet.id) == 100
 
 
+async def test_database_duplicate_operation_id_is_wrapped_without_side_effects(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed duplicate error при срабатывании DB unique constraint.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    sender_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=1_000,
+    )
+    recipient_wallet = await create_wallet_with_balance(async_session)
+    await async_session.commit()
+    operation_id = uuid4()
+    await make_use_case(async_session).execute(
+        operation_id=operation_id,
+        sender_user_id=sender_wallet.user_id,
+        sender_wallet_id=sender_wallet.id,
+        recipient_wallet_id=recipient_wallet.id,
+        amount_minor=100,
+        currency="USD",
+    )
+
+    with pytest.raises(DuplicateTransferOperationError):
+        await make_use_case_with_stale_duplicate_check(async_session).execute(
+            operation_id=operation_id,
+            sender_user_id=sender_wallet.user_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert await count_transfers(async_session) == 1
+    assert await count_ledger_transactions(async_session) == 1
+    assert await count_ledger_entries(async_session) == 2
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 1
+    )
+    assert await get_available_balance(async_session, sender_wallet.id) == 900
+    assert await get_available_balance(async_session, recipient_wallet.id) == 100
+
+
+async def test_database_ledger_duplicate_operation_id_rolls_back_transfer(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет rollback P2P transfer при late duplicate в ledger.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    sender_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=1_000,
+    )
+    recipient_wallet = await create_wallet_with_balance(async_session)
+    operation_id = uuid4()
+    await SQLAlchemyLedgerTransactionRepository(async_session).create(
+        make_ledger_transaction(
+            operation_id=operation_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+    )
+    await async_session.commit()
+
+    with pytest.raises(DuplicateTransferOperationError):
+        await make_use_case_with_stale_ledger_duplicate_check(async_session).execute(
+            operation_id=operation_id,
+            sender_user_id=sender_wallet.user_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert await count_transfers(async_session) == 0
+    assert await count_ledger_transactions(async_session) == 1
+    assert await count_ledger_entries(async_session) == 2
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 0
+    )
+    assert await get_available_balance(async_session, sender_wallet.id) == 1_000
+    assert await get_available_balance(async_session, recipient_wallet.id) == 0
+
+
 async def test_insufficient_funds_does_not_complete_transfer_or_change_balances(
     async_session: AsyncSession,
 ) -> None:
@@ -631,6 +846,48 @@ async def test_partial_updates_are_rolled_back_on_error(
             currency="USD",
         )
 
+    async_session.expire_all()
+    assert await count_transfers(async_session) == 0
+    assert await count_ledger_transactions(async_session) == 0
+    assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 0
+    )
+    assert await get_available_balance(async_session, sender_wallet.id) == 500
+    assert await get_available_balance(async_session, recipient_wallet.id) == 10
+
+
+async def test_p2p_transfer_reuses_external_transaction_without_committing(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет, что P2P use case не коммитит активную внешнюю транзакцию.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    sender_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=500,
+    )
+    recipient_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=10,
+    )
+    await async_session.commit()
+    await async_session.begin()
+
+    await make_use_case(async_session).execute(
+        operation_id=uuid4(),
+        sender_user_id=sender_wallet.user_id,
+        sender_wallet_id=sender_wallet.id,
+        recipient_wallet_id=recipient_wallet.id,
+        amount_minor=100,
+        currency="USD",
+    )
+
+    assert async_session.in_transaction()
+    await async_session.rollback()
     async_session.expire_all()
     assert await count_transfers(async_session) == 0
     assert await count_ledger_transactions(async_session) == 0

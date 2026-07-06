@@ -3,15 +3,34 @@
 from uuid import UUID
 
 from sqlalchemy import exists, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payflow.modules.transfers.application.repositories import TransferRepository
-from payflow.modules.transfers.domain import Transfer, TransferNotFoundError
+from payflow.modules.transfers.domain import (
+    DuplicateTransferOperationError,
+    Transfer,
+    TransferNotFoundError,
+)
 from payflow.modules.transfers.infrastructure.mappers import (
     transfer_entity_to_model,
     transfer_model_to_entity,
 )
 from payflow.modules.transfers.infrastructure.models import TransferModel
+
+_TRANSFER_OPERATION_ID_UNIQUE_CONSTRAINT = "uq_transfers_operation_id"
+
+
+def _violates_constraint(error: IntegrityError, constraint_name: str) -> bool:
+    original_error = error.orig
+    diagnostic = getattr(original_error, "diag", None)
+    diagnostic_constraint = getattr(diagnostic, "constraint_name", None)
+    if (
+        isinstance(diagnostic_constraint, str)
+        and diagnostic_constraint == constraint_name
+    ):
+        return True
+    return constraint_name in str(original_error) or constraint_name in str(error)
 
 
 class SQLAlchemyTransferRepository(TransferRepository):
@@ -35,11 +54,20 @@ class SQLAlchemyTransferRepository(TransferRepository):
             Сохраненный P2P-перевод.
 
         Raises:
-            sqlalchemy.exc.IntegrityError: Если база данных отклоняет ограничения.
+            DuplicateTransferOperationError: Если operation_id уже существует.
+            sqlalchemy.exc.IntegrityError: Если база данных отклоняет другие
+                ограничения.
         """
         transfer_model = transfer_entity_to_model(transfer)
         self._session.add(transfer_model)
-        await self._session.flush()
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            if _violates_constraint(exc, _TRANSFER_OPERATION_ID_UNIQUE_CONSTRAINT):
+                raise DuplicateTransferOperationError(
+                    "Transfer operation already exists."
+                ) from exc
+            raise
         return transfer_model_to_entity(transfer_model)
 
     async def get_by_id(self, transfer_id: UUID) -> Transfer | None:

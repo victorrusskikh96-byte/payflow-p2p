@@ -254,6 +254,14 @@ Accounting convention для wallet entries:
 
 ## Основные процессы
 
+Финансовые операции `Financial Core` выполняются внутри PostgreSQL transaction.
+Строки `wallet_balances`, участвующие в изменении balance projection,
+блокируются через row-level locks. Если операция затрагивает два кошелька,
+balance rows блокируются в детерминированном порядке по `wallet_id`, что
+снижает риск deadlock, делает поведение предсказуемым и упрощает будущие
+concurrent tests. Ledger, wallet balance projections и outbox event
+сохраняются атомарно в одной transaction.
+
 ### A. Регистрация и вход
 
 1. Клиент отправляет email и password.
@@ -293,7 +301,8 @@ Internal deposit - внутренний application-level сценарий. Он
 3. Wallets обновляет balance projection:
    - source `available` уменьшается;
    - target `available` увеличивается.
-4. Source balance блокируется на уровне строки.
+4. Source и target balance rows блокируются на уровне строк в стабильном
+   порядке по `wallet_id`.
 5. Если source wallet не имеет достаточного available balance, операция
    отклоняется.
 6. Ledger posting и обновление balances выполняются атомарно.
@@ -340,7 +349,8 @@ Outbox pattern нужен, чтобы связать изменение бизн
 истины: сначала бизнес-операция и outbox event атомарно сохраняются в базе
 данных, а внешний publisher может быть добавлен позже.
 
-Текущая реализация не подключает Kafka, Redis, publisher или worker. Сейчас
+Текущая runtime-реализация не подключает Kafka, Redis, publisher или worker.
+Kafka пока не реализован и не является частью текущего runtime. Сейчас
 реализован только foundation:
 
 - доменная модель outbox event;
@@ -474,6 +484,9 @@ make test
 - Таблица `outbox_events` в PostgreSQL.
 - Сохранение outbox events в одной transaction с `wallet.created`,
   `internal_deposit.completed` и `p2p_transfer.completed`.
+- Financial Core hardening: transaction boundaries, row-level locks для balance
+  projections и детерминированный порядок блокировок при операциях с двумя
+  кошельками.
 - E2E tests для Auth, Wallets и Transfers endpoints.
 
 Пока не реализовано:
@@ -490,14 +503,13 @@ make test
 
 Ближайший план:
 
-- Financial Core hardening.
 - Idempotency review.
-- Transaction boundaries review.
 - Failure scenarios review.
 - External integrations после hardening.
 - Payment provider adapter.
 - Redis caching/rate limiting.
 - ClickHouse analytics.
 - Prometheus/Grafana.
-- Kafka publisher for outbox events как будущий этап.
+- Kafka publisher for outbox events остается будущим этапом, а не обязательным
+  ближайшим шагом.
 - CI/CD.

@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+from payflow.modules.ledger.application.exceptions import (
+    LedgerTransactionAlreadyExistsError,
+)
 from payflow.modules.ledger.application.repositories import (
     LedgerTransactionRepository,
 )
@@ -31,6 +34,9 @@ from payflow.modules.transfers.domain import (
     SameTransferWalletsError,
     Transfer,
     TransferNotFoundError,
+)
+from payflow.modules.wallets.application.balance_locks import (
+    lock_two_wallet_balances_for_update,
 )
 from payflow.modules.wallets.application.repositories import (
     WalletBalanceRepository,
@@ -125,6 +131,10 @@ class CreateP2PTransferUseCase:
                 raise DuplicateTransferOperationError(
                     "Transfer operation already exists."
                 )
+            if await self._ledger_transactions.exists_by_operation_id(operation_id):
+                raise DuplicateTransferOperationError(
+                    "Transfer operation already exists."
+                )
 
             sender_wallet = await self._get_sender_wallet(
                 wallet_id=sender_wallet_id,
@@ -163,15 +173,20 @@ class CreateP2PTransferUseCase:
                     currency=normalized_currency,
                 )
             )
-            transaction = await self._ledger_transactions.create(
-                self._build_ledger_transaction(
-                    operation_id=operation_id,
-                    sender_wallet_id=sender_wallet_id,
-                    recipient_wallet_id=recipient_wallet_id,
-                    amount_minor=amount_minor,
-                    currency=normalized_currency,
+            try:
+                transaction = await self._ledger_transactions.create(
+                    self._build_ledger_transaction(
+                        operation_id=operation_id,
+                        sender_wallet_id=sender_wallet_id,
+                        recipient_wallet_id=recipient_wallet_id,
+                        amount_minor=amount_minor,
+                        currency=normalized_currency,
+                    )
                 )
-            )
+            except LedgerTransactionAlreadyExistsError as exc:
+                raise DuplicateTransferOperationError(
+                    "Transfer operation already exists."
+                ) from exc
 
             sender_balance.decrease_available_amount(amount_minor)
             recipient_balance.increase_available_amount(amount_minor)
@@ -225,13 +240,11 @@ class CreateP2PTransferUseCase:
         sender_wallet_id: UUID,
         recipient_wallet_id: UUID,
     ) -> tuple[BalanceProjection, BalanceProjection]:
-        locked_balances: dict[UUID, BalanceProjection] = {}
-        for wallet_id in sorted((sender_wallet_id, recipient_wallet_id), key=str):
-            locked_balances[
-                wallet_id
-            ] = await self._balances.get_by_wallet_id_for_update(wallet_id)
-
-        return locked_balances[sender_wallet_id], locked_balances[recipient_wallet_id]
+        return await lock_two_wallet_balances_for_update(
+            self._balances,
+            first_wallet_id=sender_wallet_id,
+            second_wallet_id=recipient_wallet_id,
+        )
 
     @staticmethod
     def _validate_amount(amount_minor: int) -> None:

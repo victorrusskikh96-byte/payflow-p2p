@@ -3,8 +3,12 @@
 from uuid import UUID
 
 from sqlalchemy import exists, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from payflow.modules.ledger.application.exceptions import (
+    LedgerTransactionAlreadyExistsError,
+)
 from payflow.modules.ledger.application.repositories import (
     LedgerTransactionRepository,
 )
@@ -19,6 +23,20 @@ from payflow.modules.ledger.infrastructure.models import (
     LedgerEntryModel,
     LedgerTransactionModel,
 )
+
+_LEDGER_OPERATION_ID_UNIQUE_CONSTRAINT = "uq_ledger_transactions_operation_id"
+
+
+def _violates_constraint(error: IntegrityError, constraint_name: str) -> bool:
+    original_error = error.orig
+    diagnostic = getattr(original_error, "diag", None)
+    diagnostic_constraint = getattr(diagnostic, "constraint_name", None)
+    if (
+        isinstance(diagnostic_constraint, str)
+        and diagnostic_constraint == constraint_name
+    ):
+        return True
+    return constraint_name in str(original_error) or constraint_name in str(error)
 
 
 class SQLAlchemyLedgerTransactionRepository(LedgerTransactionRepository):
@@ -42,7 +60,9 @@ class SQLAlchemyLedgerTransactionRepository(LedgerTransactionRepository):
             Сохраненная ledger transaction.
 
         Raises:
-            sqlalchemy.exc.IntegrityError: Если база данных отклоняет ограничения.
+            LedgerTransactionAlreadyExistsError: Если operation_id уже существует.
+            sqlalchemy.exc.IntegrityError: Если база данных отклоняет другие
+                ограничения.
         """
         transaction_model = ledger_transaction_entity_to_model(transaction)
         entry_models = [
@@ -50,9 +70,19 @@ class SQLAlchemyLedgerTransactionRepository(LedgerTransactionRepository):
         ]
 
         self._session.add(transaction_model)
-        await self._session.flush()
-        self._session.add_all(entry_models)
-        await self._session.flush()
+        try:
+            await self._session.flush()
+            self._session.add_all(entry_models)
+            await self._session.flush()
+        except IntegrityError as exc:
+            if _violates_constraint(
+                exc,
+                _LEDGER_OPERATION_ID_UNIQUE_CONSTRAINT,
+            ):
+                raise LedgerTransactionAlreadyExistsError(
+                    "Ledger transaction with this operation_id already exists."
+                ) from exc
+            raise
 
         return ledger_transaction_model_to_entity(transaction_model, entry_models)
 

@@ -570,6 +570,7 @@ class FakeTransactionManager:
 
 def make_wallet(
     *,
+    wallet_id: UUID | None = None,
     user_id: UUID | None = None,
     currency: str = "USD",
     status: WalletStatus = WalletStatus.ACTIVE,
@@ -577,6 +578,7 @@ def make_wallet(
     """Создает кошелек для unit-теста.
 
     Args:
+        wallet_id: Явный идентификатор кошелька.
         user_id: Идентификатор владельца кошелька.
         currency: Код валюты кошелька.
         status: Статус кошелька.
@@ -585,6 +587,7 @@ def make_wallet(
         Доменный кошелек.
     """
     return Wallet(
+        id=wallet_id,
         user_id=user_id if user_id is not None else uuid4(),
         currency=currency,
         status=status,
@@ -741,6 +744,61 @@ async def test_successful_transfer_increases_recipient_balance() -> None:
 
     assert result.recipient_balance.available_amount_minor == 145
     assert balances.balances[recipient_wallet.id].available_amount_minor == 145
+
+
+@pytest.mark.parametrize(
+    ("sender_wallet_id", "recipient_wallet_id"),
+    [
+        (
+            UUID("00000000-0000-0000-0000-000000000001"),
+            UUID("00000000-0000-0000-0000-000000000002"),
+        ),
+        (
+            UUID("00000000-0000-0000-0000-000000000002"),
+            UUID("00000000-0000-0000-0000-000000000001"),
+        ),
+    ],
+)
+async def test_transfer_locks_balances_by_wallet_id(
+    sender_wallet_id: UUID,
+    recipient_wallet_id: UUID,
+) -> None:
+    """Проверяет стабильный порядок locks и корректный результат.
+
+    Args:
+        sender_wallet_id: Идентификатор sender wallet.
+        recipient_wallet_id: Идентификатор recipient wallet.
+    """
+    sender_user_id = uuid4()
+    sender_wallet = make_wallet(
+        wallet_id=sender_wallet_id,
+        user_id=sender_user_id,
+    )
+    recipient_wallet = make_wallet(wallet_id=recipient_wallet_id)
+    use_case, _, _, balances, _, _, _ = make_use_case(
+        sender_wallet=sender_wallet,
+        recipient_wallet=recipient_wallet,
+        sender_balance_amount_minor=500,
+        recipient_balance_amount_minor=20,
+    )
+
+    result = await use_case.execute(
+        operation_id=uuid4(),
+        sender_user_id=sender_user_id,
+        sender_wallet_id=sender_wallet.id,
+        recipient_wallet_id=recipient_wallet.id,
+        amount_minor=100,
+        currency="USD",
+    )
+
+    assert balances.locked_wallet_ids == sorted(
+        [sender_wallet.id, recipient_wallet.id],
+        key=lambda wallet_id: wallet_id.int,
+    )
+    assert result.sender_balance.available_amount_minor == 400
+    assert result.recipient_balance.available_amount_minor == 120
+    assert balances.balances[sender_wallet.id].available_amount_minor == 400
+    assert balances.balances[recipient_wallet.id].available_amount_minor == 120
 
 
 async def test_duplicate_operation_id_is_rejected() -> None:

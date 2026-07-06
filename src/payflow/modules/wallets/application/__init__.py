@@ -1,5 +1,8 @@
 """Публичные application-компоненты модуля кошельков."""
 
+from payflow.modules.wallets.application.balance_locks import (
+    lock_two_wallet_balances_for_update,
+)
 from payflow.modules.wallets.application.repositories import (
     WalletBalanceRepository,
     WalletRepository,
@@ -20,4 +23,5 @@ __all__ = [
     "WalletBalanceRepository",
     "WalletRepository",
     "WalletWithBalance",
+    "lock_two_wallet_balances_for_update",
 ]

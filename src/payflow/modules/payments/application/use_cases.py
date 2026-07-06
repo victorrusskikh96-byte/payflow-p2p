@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+from payflow.modules.ledger.application.exceptions import (
+    LedgerTransactionAlreadyExistsError,
+)
 from payflow.modules.ledger.application.repositories import (
     LedgerTransactionRepository,
 )
@@ -23,6 +26,9 @@ from payflow.modules.payments.application.exceptions import (
     WalletCurrencyMismatchError,
 )
 from payflow.modules.payments.application.transactions import TransactionManager
+from payflow.modules.wallets.application.balance_locks import (
+    lock_two_wallet_balances_for_update,
+)
 from payflow.modules.wallets.application.repositories import (
     WalletBalanceRepository,
     WalletRepository,
@@ -143,15 +149,20 @@ class InternalDepositUseCase:
                     "Source wallet available balance is insufficient."
                 )
 
-            transaction = await self._ledger_transactions.create(
-                self._build_ledger_transaction(
-                    operation_id=operation_id,
-                    source_wallet_id=source_wallet_id,
-                    target_wallet_id=target_wallet_id,
-                    amount_minor=amount_minor,
-                    currency=normalized_currency,
+            try:
+                transaction = await self._ledger_transactions.create(
+                    self._build_ledger_transaction(
+                        operation_id=operation_id,
+                        source_wallet_id=source_wallet_id,
+                        target_wallet_id=target_wallet_id,
+                        amount_minor=amount_minor,
+                        currency=normalized_currency,
+                    )
                 )
-            )
+            except LedgerTransactionAlreadyExistsError as exc:
+                raise DuplicateInternalDepositOperationError(
+                    "Internal deposit operation already exists."
+                ) from exc
 
             source_balance.decrease_available_amount(amount_minor)
             target_balance.increase_available_amount(amount_minor)
@@ -188,13 +199,11 @@ class InternalDepositUseCase:
         source_wallet_id: UUID,
         target_wallet_id: UUID,
     ) -> tuple[BalanceProjection, BalanceProjection]:
-        locked_balances: dict[UUID, BalanceProjection] = {}
-        for wallet_id in sorted((source_wallet_id, target_wallet_id), key=str):
-            locked_balances[
-                wallet_id
-            ] = await self._balances.get_by_wallet_id_for_update(wallet_id)
-
-        return locked_balances[source_wallet_id], locked_balances[target_wallet_id]
+        return await lock_two_wallet_balances_for_update(
+            self._balances,
+            first_wallet_id=source_wallet_id,
+            second_wallet_id=target_wallet_id,
+        )
 
     @staticmethod
     def _ensure_wallet_currencies_match(
