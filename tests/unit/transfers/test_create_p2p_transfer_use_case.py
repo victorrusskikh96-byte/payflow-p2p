@@ -11,6 +11,7 @@ from payflow.modules.ledger.domain import (
     LedgerOperationType,
     LedgerTransaction,
 )
+from payflow.modules.outbox.domain import OutboxEvent, OutboxEventStatus
 from payflow.modules.transfers.application.exceptions import (
     InactiveTransferWalletError,
     InsufficientTransferFundsError,
@@ -402,6 +403,137 @@ class InMemoryLedgerTransactionRepository:
         return operation_id in self.transactions_by_operation_id
 
 
+class InMemoryOutboxEventRepository:
+    """Хранит outbox events в памяти для unit-тестов."""
+
+    def __init__(self) -> None:
+        """Создает пустой repository outbox events."""
+        self.events_by_id: dict[UUID, OutboxEvent] = {}
+
+    async def create(self, event: OutboxEvent) -> OutboxEvent:
+        """Сохраняет outbox event.
+
+        Args:
+            event: Доменная сущность outbox event.
+
+        Returns:
+            Сохраненный outbox event.
+        """
+        self.events_by_id[event.id] = event
+        return event
+
+    async def get_by_id(self, event_id: UUID) -> OutboxEvent | None:
+        """Возвращает outbox event по id.
+
+        Args:
+            event_id: Идентификатор outbox event.
+
+        Returns:
+            Outbox event или None.
+        """
+        return self.events_by_id.get(event_id)
+
+    async def get_pending(self, *, limit: int) -> list[OutboxEvent]:
+        """Возвращает pending outbox events.
+
+        Args:
+            limit: Максимальное количество событий.
+
+        Returns:
+            Список pending events.
+        """
+        if limit <= 0:
+            return []
+        return [
+            event
+            for event in self.events_by_id.values()
+            if event.status is OutboxEventStatus.PENDING
+        ][:limit]
+
+    async def get_failed(self, *, limit: int) -> list[OutboxEvent]:
+        """Возвращает failed outbox events.
+
+        Args:
+            limit: Максимальное количество событий.
+
+        Returns:
+            Список failed events.
+        """
+        if limit <= 0:
+            return []
+        return [
+            event
+            for event in self.events_by_id.values()
+            if event.status is OutboxEventStatus.FAILED
+        ][:limit]
+
+    async def mark_published(self, event_id: UUID) -> OutboxEvent | None:
+        """Помечает outbox event опубликованным.
+
+        Args:
+            event_id: Идентификатор outbox event.
+
+        Returns:
+            Обновленный outbox event или None.
+        """
+        event = self.events_by_id.get(event_id)
+        if event is None:
+            return None
+        event.mark_published()
+        return event
+
+    async def mark_failed(
+        self,
+        event_id: UUID,
+        *,
+        last_error: str,
+    ) -> OutboxEvent | None:
+        """Помечает outbox event failed.
+
+        Args:
+            event_id: Идентификатор outbox event.
+            last_error: Текст последней ошибки.
+
+        Returns:
+            Обновленный outbox event или None.
+        """
+        event = self.events_by_id.get(event_id)
+        if event is None:
+            return None
+        event.mark_failed(last_error=last_error)
+        return event
+
+    async def increase_attempts(self, event_id: UUID) -> OutboxEvent | None:
+        """Увеличивает счетчик попыток публикации.
+
+        Args:
+            event_id: Идентификатор outbox event.
+
+        Returns:
+            Обновленный outbox event или None.
+        """
+        event = self.events_by_id.get(event_id)
+        if event is None:
+            return None
+        event.attempts += 1
+        return event
+
+    async def return_failed_to_pending(self, event_id: UUID) -> OutboxEvent | None:
+        """Возвращает failed outbox event в pending.
+
+        Args:
+            event_id: Идентификатор outbox event.
+
+        Returns:
+            Обновленный outbox event или None.
+        """
+        event = self.events_by_id.get(event_id)
+        if event is None:
+            return None
+        event.mark_pending()
+        return event
+
+
 class FakeTransactionManager:
     """Имитирует transaction manager для unit-тестов."""
 
@@ -515,6 +647,7 @@ def make_use_case(
         ),
         balances=balances,
         ledger_transactions=ledger_transactions,
+        outbox_events=InMemoryOutboxEventRepository(),
         transaction_manager=transaction_manager,
     )
     return (
@@ -681,8 +814,14 @@ async def test_insufficient_funds_is_rejected() -> None:
 
 async def test_sender_wallet_belongs_to_another_user_is_rejected() -> None:
     """Проверяет отказ, если sender wallet принадлежит другому пользователю."""
-    use_case, _, ledger_transactions, _, transaction_manager, sender_wallet, (
-        recipient_wallet
+    (
+        use_case,
+        _,
+        ledger_transactions,
+        _,
+        transaction_manager,
+        sender_wallet,
+        (recipient_wallet),
     ) = make_use_case()
 
     with pytest.raises(TransferWalletOwnershipError):

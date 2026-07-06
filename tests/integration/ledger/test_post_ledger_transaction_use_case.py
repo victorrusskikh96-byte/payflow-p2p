@@ -129,9 +129,12 @@ async def count_ledger_transactions(async_session: AsyncSession) -> int:
     Returns:
         Количество ledger transactions.
     """
-    return await async_session.scalar(
-        select(func.count()).select_from(LedgerTransactionModel)
-    ) or 0
+    return (
+        await async_session.scalar(
+            select(func.count()).select_from(LedgerTransactionModel)
+        )
+        or 0
+    )
 
 
 async def count_ledger_entries(async_session: AsyncSession) -> int:
@@ -143,9 +146,10 @@ async def count_ledger_entries(async_session: AsyncSession) -> int:
     Returns:
         Количество ledger entries.
     """
-    return await async_session.scalar(
-        select(func.count()).select_from(LedgerEntryModel)
-    ) or 0
+    return (
+        await async_session.scalar(select(func.count()).select_from(LedgerEntryModel))
+        or 0
+    )
 
 
 async def test_successful_posting_persists_transaction_and_entries(
