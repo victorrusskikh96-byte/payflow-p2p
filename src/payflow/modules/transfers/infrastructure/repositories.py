@@ -89,8 +89,7 @@ class SQLAlchemyTransferRepository(TransferRepository):
         )
         result = await self._session.scalars(statement)
         return [
-            transfer_model_to_entity(transfer_model)
-            for transfer_model in result.all()
+            transfer_model_to_entity(transfer_model) for transfer_model in result.all()
         ]
 
     async def exists_by_operation_id(self, operation_id: UUID) -> bool:

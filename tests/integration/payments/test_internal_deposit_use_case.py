@@ -17,6 +17,10 @@ from payflow.modules.ledger.infrastructure.models import (
 from payflow.modules.ledger.infrastructure.repositories import (
     SQLAlchemyLedgerTransactionRepository,
 )
+from payflow.modules.outbox.infrastructure.models import OutboxEventModel
+from payflow.modules.outbox.infrastructure.repositories import (
+    SQLAlchemyOutboxEventRepository,
+)
 from payflow.modules.payments.application.exceptions import (
     DuplicateInternalDepositOperationError,
     InsufficientSourceFundsError,
@@ -121,6 +125,7 @@ def make_use_case(async_session: AsyncSession) -> InternalDepositUseCase:
         wallets=SQLAlchemyWalletRepository(async_session),
         balances=SQLAlchemyWalletBalanceRepository(async_session),
         ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
         transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
 
@@ -146,6 +151,7 @@ def make_use_case_with_failing_balance_save(
             failed_wallet_id=failed_wallet_id,
         ),
         ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
         transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
 
@@ -178,6 +184,30 @@ async def count_ledger_entries(async_session: AsyncSession) -> int:
     """
     return int(
         await async_session.scalar(select(func.count()).select_from(LedgerEntryModel))
+        or 0
+    )
+
+
+async def count_outbox_events(
+    async_session: AsyncSession,
+    *,
+    event_type: str,
+) -> int:
+    """Считает outbox events заданного типа.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+        event_type: Тип события outbox.
+
+    Returns:
+        Количество outbox events.
+    """
+    return int(
+        await async_session.scalar(
+            select(func.count())
+            .select_from(OutboxEventModel)
+            .where(OutboxEventModel.event_type == event_type)
+        )
         or 0
     )
 
@@ -251,6 +281,46 @@ async def test_successful_internal_deposit_persists_transaction_and_entries(
     }
 
 
+async def test_successful_internal_deposit_creates_completed_outbox_event(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет создание outbox event для успешного internal deposit.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    source_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=1_000,
+    )
+    target_wallet = await create_wallet_with_balance(async_session)
+    await async_session.commit()
+    operation_id = uuid4()
+
+    result = await make_use_case(async_session).execute(
+        operation_id=operation_id,
+        source_wallet_id=source_wallet.id,
+        target_wallet_id=target_wallet.id,
+        amount_minor=250,
+        currency="usd",
+    )
+    event = await async_session.scalar(
+        select(OutboxEventModel).where(
+            OutboxEventModel.event_type == "internal_deposit.completed",
+        )
+    )
+
+    assert event is not None
+    assert event.aggregate_type == "internal_deposit"
+    assert event.aggregate_id == str(operation_id)
+    assert event.payload["operation_id"] == str(operation_id)
+    assert event.payload["source_wallet_id"] == str(source_wallet.id)
+    assert event.payload["target_wallet_id"] == str(target_wallet.id)
+    assert event.payload["ledger_transaction_id"] == str(result.transaction.id)
+    assert event.payload["amount_minor"] == 250
+    assert event.payload["currency"] == "USD"
+
+
 async def test_successful_internal_deposit_updates_balances(
     async_session: AsyncSession,
 ) -> None:
@@ -316,6 +386,13 @@ async def test_duplicate_operation_id_is_rejected(
 
     assert await count_ledger_transactions(async_session) == 1
     assert await count_ledger_entries(async_session) == 2
+    assert (
+        await count_outbox_events(
+            async_session,
+            event_type="internal_deposit.completed",
+        )
+        == 1
+    )
     assert await get_available_balance(async_session, source_wallet.id) == 900
     assert await get_available_balance(async_session, target_wallet.id) == 100
 
@@ -349,6 +426,13 @@ async def test_insufficient_source_funds_does_not_create_ledger_transaction(
 
     assert await count_ledger_transactions(async_session) == 0
     assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(
+            async_session,
+            event_type="internal_deposit.completed",
+        )
+        == 0
+    )
     assert await get_available_balance(async_session, source_wallet.id) == 99
     assert await get_available_balance(async_session, target_wallet.id) == 20
 
@@ -386,5 +470,12 @@ async def test_failed_operation_rolls_back_partial_balance_updates(
     async_session.expire_all()
     assert await count_ledger_transactions(async_session) == 0
     assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(
+            async_session,
+            event_type="internal_deposit.completed",
+        )
+        == 0
+    )
     assert await get_available_balance(async_session, source_wallet.id) == 500
     assert await get_available_balance(async_session, target_wallet.id) == 10

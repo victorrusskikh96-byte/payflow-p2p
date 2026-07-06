@@ -12,6 +12,8 @@ from payflow.modules.ledger.domain import (
     LedgerOperationType,
     LedgerTransaction,
 )
+from payflow.modules.outbox.application.event_factory import OutboxEventFactory
+from payflow.modules.outbox.application.repositories import OutboxEventRepository
 from payflow.modules.payments.application.exceptions import (
     DuplicateInternalDepositOperationError,
     InsufficientSourceFundsError,
@@ -52,6 +54,7 @@ class InternalDepositUseCase:
         wallets: WalletRepository,
         balances: WalletBalanceRepository,
         ledger_transactions: LedgerTransactionRepository,
+        outbox_events: OutboxEventRepository,
         transaction_manager: TransactionManager,
     ) -> None:
         """Создает use case internal deposit.
@@ -60,11 +63,13 @@ class InternalDepositUseCase:
             wallets: Репозиторий кошельков.
             balances: Репозиторий проекций балансов.
             ledger_transactions: Репозиторий ledger transactions.
+            outbox_events: Репозиторий outbox events.
             transaction_manager: Менеджер транзакции БД.
         """
         self._wallets = wallets
         self._balances = balances
         self._ledger_transactions = ledger_transactions
+        self._outbox_events = outbox_events
         self._transaction_manager = transaction_manager
 
     async def execute(
@@ -152,6 +157,16 @@ class InternalDepositUseCase:
             target_balance.increase_available_amount(amount_minor)
             source_balance = await self._balances.save(source_balance)
             target_balance = await self._balances.save(target_balance)
+            await self._outbox_events.create(
+                OutboxEventFactory.internal_deposit_completed(
+                    operation_id=operation_id,
+                    source_wallet_id=source_wallet_id,
+                    target_wallet_id=target_wallet_id,
+                    ledger_transaction_id=transaction.id,
+                    amount_minor=amount_minor,
+                    currency=normalized_currency,
+                )
+            )
 
             return InternalDepositResult(
                 transaction=transaction,

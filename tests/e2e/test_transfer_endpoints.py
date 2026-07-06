@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from payflow.modules.wallets.infrastructure.models import WalletBalanceModel
 from tests.e2e.test_wallet_endpoints import (
     auth_headers,
+    count_outbox_events,
     create_wallet,
     register_user_and_get_access_token,
 )
@@ -156,6 +157,13 @@ async def test_authenticated_user_can_create_transfer(
     assert body["currency"] == "USD"
     assert body["status"] == "COMPLETED"
     assert body["ledger_transaction_id"] is not None
+    assert (
+        await count_outbox_events(
+            e2e_async_session_factory,
+            event_type="p2p_transfer.completed",
+        )
+        == 1
+    )
 
 
 async def test_unauthenticated_create_transfer_returns_unauthorized(
@@ -219,6 +227,13 @@ async def test_user_cannot_transfer_from_another_users_wallet(
     )
 
     assert response.status_code == 404
+    assert (
+        await count_outbox_events(
+            e2e_async_session_factory,
+            event_type="p2p_transfer.completed",
+        )
+        == 0
+    )
 
 
 async def test_insufficient_funds_returns_error(
@@ -259,6 +274,13 @@ async def test_insufficient_funds_returns_error(
     )
 
     assert response.status_code == 409
+    assert (
+        await count_outbox_events(
+            e2e_async_session_factory,
+            event_type="p2p_transfer.completed",
+        )
+        == 0
+    )
 
 
 async def test_same_wallet_transfer_returns_error(
@@ -345,6 +367,13 @@ async def test_duplicate_operation_id_returns_conflict(
     )
 
     assert response.status_code == 409
+    assert (
+        await count_outbox_events(
+            e2e_async_session_factory,
+            event_type="p2p_transfer.completed",
+        )
+        == 1
+    )
 
 
 async def test_user_can_list_own_transfers(

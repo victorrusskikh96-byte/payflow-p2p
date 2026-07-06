@@ -12,6 +12,8 @@ from payflow.modules.ledger.domain import (
     LedgerOperationType,
     LedgerTransaction,
 )
+from payflow.modules.outbox.application.event_factory import OutboxEventFactory
+from payflow.modules.outbox.application.repositories import OutboxEventRepository
 from payflow.modules.transfers.application.exceptions import (
     InactiveTransferWalletError,
     InsufficientTransferFundsError,
@@ -57,6 +59,7 @@ class CreateP2PTransferUseCase:
         wallets: WalletRepository,
         balances: WalletBalanceRepository,
         ledger_transactions: LedgerTransactionRepository,
+        outbox_events: OutboxEventRepository,
         transaction_manager: TransactionManager,
     ) -> None:
         """Создает use case P2P-перевода.
@@ -66,12 +69,14 @@ class CreateP2PTransferUseCase:
             wallets: Репозиторий кошельков.
             balances: Репозиторий проекций балансов.
             ledger_transactions: Репозиторий ledger transactions.
+            outbox_events: Репозиторий outbox events.
             transaction_manager: Менеджер транзакции БД.
         """
         self._transfers = transfers
         self._wallets = wallets
         self._balances = balances
         self._ledger_transactions = ledger_transactions
+        self._outbox_events = outbox_events
         self._transaction_manager = transaction_manager
 
     async def execute(
@@ -175,6 +180,18 @@ class CreateP2PTransferUseCase:
 
             transfer.complete(ledger_transaction_id=transaction.id)
             transfer = await self._transfers.save_status(transfer)
+            await self._outbox_events.create(
+                OutboxEventFactory.p2p_transfer_completed(
+                    transfer_id=transfer.id,
+                    operation_id=operation_id,
+                    sender_user_id=sender_user_id,
+                    sender_wallet_id=sender_wallet_id,
+                    recipient_wallet_id=recipient_wallet_id,
+                    ledger_transaction_id=transaction.id,
+                    amount_minor=amount_minor,
+                    currency=normalized_currency,
+                )
+            )
 
             return P2PTransferResult(
                 transfer=transfer,
@@ -193,9 +210,7 @@ class CreateP2PTransferUseCase:
         if wallet is None:
             raise SenderWalletNotFoundError("Sender wallet was not found.")
         if wallet.user_id != sender_user_id:
-            raise TransferWalletOwnershipError(
-                "Sender wallet belongs to another user."
-            )
+            raise TransferWalletOwnershipError("Sender wallet belongs to another user.")
         return wallet
 
     async def _get_recipient_wallet(self, wallet_id: UUID) -> Wallet:

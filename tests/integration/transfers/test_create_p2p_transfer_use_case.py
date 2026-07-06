@@ -17,6 +17,10 @@ from payflow.modules.ledger.infrastructure.models import (
 from payflow.modules.ledger.infrastructure.repositories import (
     SQLAlchemyLedgerTransactionRepository,
 )
+from payflow.modules.outbox.infrastructure.models import OutboxEventModel
+from payflow.modules.outbox.infrastructure.repositories import (
+    SQLAlchemyOutboxEventRepository,
+)
 from payflow.modules.transfers.application.exceptions import (
     InsufficientTransferFundsError,
     TransferWalletCurrencyMismatchError,
@@ -138,6 +142,7 @@ def make_use_case(async_session: AsyncSession) -> CreateP2PTransferUseCase:
         wallets=SQLAlchemyWalletRepository(async_session),
         balances=SQLAlchemyWalletBalanceRepository(async_session),
         ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
         transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
 
@@ -164,6 +169,7 @@ def make_use_case_with_failing_balance_save(
             failed_wallet_id=failed_wallet_id,
         ),
         ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
         transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
 
@@ -178,8 +184,7 @@ async def count_transfers(async_session: AsyncSession) -> int:
         Количество P2P-переводов.
     """
     return int(
-        await async_session.scalar(select(func.count()).select_from(TransferModel))
-        or 0
+        await async_session.scalar(select(func.count()).select_from(TransferModel)) or 0
     )
 
 
@@ -230,6 +235,30 @@ async def count_ledger_entries(async_session: AsyncSession) -> int:
     """
     return int(
         await async_session.scalar(select(func.count()).select_from(LedgerEntryModel))
+        or 0
+    )
+
+
+async def count_outbox_events(
+    async_session: AsyncSession,
+    *,
+    event_type: str,
+) -> int:
+    """Считает outbox events заданного типа.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+        event_type: Тип события outbox.
+
+    Returns:
+        Количество outbox events.
+    """
+    return int(
+        await async_session.scalar(
+            select(func.count())
+            .select_from(OutboxEventModel)
+            .where(OutboxEventModel.event_type == event_type)
+        )
         or 0
     )
 
@@ -309,6 +338,49 @@ async def test_successful_p2p_transfer_persists_transfer_transaction_and_entries
     }
 
 
+async def test_successful_p2p_transfer_creates_completed_outbox_event(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет создание outbox event для успешного P2P-перевода.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    sender_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=1_000,
+    )
+    recipient_wallet = await create_wallet_with_balance(async_session)
+    await async_session.commit()
+    operation_id = uuid4()
+
+    result = await make_use_case(async_session).execute(
+        operation_id=operation_id,
+        sender_user_id=sender_wallet.user_id,
+        sender_wallet_id=sender_wallet.id,
+        recipient_wallet_id=recipient_wallet.id,
+        amount_minor=250,
+        currency="usd",
+    )
+    event = await async_session.scalar(
+        select(OutboxEventModel).where(
+            OutboxEventModel.event_type == "p2p_transfer.completed",
+        )
+    )
+
+    assert event is not None
+    assert event.aggregate_type == "p2p_transfer"
+    assert event.aggregate_id == str(result.transfer.id)
+    assert event.payload["transfer_id"] == str(result.transfer.id)
+    assert event.payload["operation_id"] == str(operation_id)
+    assert event.payload["sender_user_id"] == str(sender_wallet.user_id)
+    assert event.payload["sender_wallet_id"] == str(sender_wallet.id)
+    assert event.payload["recipient_wallet_id"] == str(recipient_wallet.id)
+    assert event.payload["ledger_transaction_id"] == str(result.transaction.id)
+    assert event.payload["amount_minor"] == 250
+    assert event.payload["currency"] == "USD"
+
+
 async def test_successful_p2p_transfer_updates_balances(
     async_session: AsyncSession,
 ) -> None:
@@ -378,6 +450,10 @@ async def test_duplicate_operation_id_is_rejected(
     assert await count_transfers(async_session) == 1
     assert await count_ledger_transactions(async_session) == 1
     assert await count_ledger_entries(async_session) == 2
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 1
+    )
     assert await get_available_balance(async_session, sender_wallet.id) == 900
     assert await get_available_balance(async_session, recipient_wallet.id) == 100
 
@@ -413,6 +489,10 @@ async def test_insufficient_funds_does_not_complete_transfer_or_change_balances(
     assert await count_completed_transfers(async_session) == 0
     assert await count_ledger_transactions(async_session) == 0
     assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 0
+    )
     assert await get_available_balance(async_session, sender_wallet.id) == 99
     assert await get_available_balance(async_session, recipient_wallet.id) == 20
 
@@ -512,6 +592,10 @@ async def test_sender_cannot_transfer_from_another_users_wallet(
 
     assert await count_transfers(async_session) == 0
     assert await count_ledger_transactions(async_session) == 0
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 0
+    )
     assert await get_available_balance(async_session, sender_wallet.id) == 1_000
     assert await get_available_balance(async_session, recipient_wallet.id) == 0
 
@@ -551,5 +635,9 @@ async def test_partial_updates_are_rolled_back_on_error(
     assert await count_transfers(async_session) == 0
     assert await count_ledger_transactions(async_session) == 0
     assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 0
+    )
     assert await get_available_balance(async_session, sender_wallet.id) == 500
     assert await get_available_balance(async_session, recipient_wallet.id) == 10

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from payflow.core.config import settings
 from payflow.modules.auth.infrastructure import models as auth_models
 from payflow.modules.ledger.infrastructure import models as ledger_models
+from payflow.modules.outbox.infrastructure import models as outbox_models
 from payflow.modules.transfers.infrastructure import models as transfers_models
 from payflow.modules.users.infrastructure import models as users_models
 from payflow.modules.wallets.infrastructure import models as wallets_models
@@ -24,7 +25,14 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-_ = auth_models, ledger_models, transfers_models, users_models, wallets_models
+_ = (
+    auth_models,
+    ledger_models,
+    outbox_models,
+    transfers_models,
+    users_models,
+    wallets_models,
+)
 
 
 def get_database_url() -> str:

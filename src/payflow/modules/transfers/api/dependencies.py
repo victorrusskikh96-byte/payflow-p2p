@@ -12,6 +12,10 @@ from payflow.modules.ledger.application.repositories import (
 from payflow.modules.ledger.infrastructure.repositories import (
     SQLAlchemyLedgerTransactionRepository,
 )
+from payflow.modules.outbox.application.repositories import OutboxEventRepository
+from payflow.modules.outbox.infrastructure.repositories import (
+    SQLAlchemyOutboxEventRepository,
+)
 from payflow.modules.transfers.application import (
     CreateP2PTransferUseCase,
     GetMyTransfersUseCase,
@@ -91,6 +95,20 @@ def get_ledger_transaction_repository(
     return SQLAlchemyLedgerTransactionRepository(session)
 
 
+def get_outbox_event_repository(
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> OutboxEventRepository:
+    """Создает репозиторий outbox events для transfer use cases.
+
+    Args:
+        session: Асинхронная SQLAlchemy-сессия текущего запроса.
+
+    Returns:
+        Репозиторий outbox events.
+    """
+    return SQLAlchemyOutboxEventRepository(session)
+
+
 def get_transaction_manager(
     session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> TransactionManager:
@@ -119,6 +137,10 @@ def get_create_p2p_transfer_use_case(
         LedgerTransactionRepository,
         Depends(get_ledger_transaction_repository),
     ],
+    outbox_events: Annotated[
+        OutboxEventRepository,
+        Depends(get_outbox_event_repository),
+    ],
     transaction_manager: Annotated[
         TransactionManager,
         Depends(get_transaction_manager),
@@ -131,6 +153,7 @@ def get_create_p2p_transfer_use_case(
         wallets: Репозиторий кошельков.
         balances: Репозиторий проекций балансов.
         ledger_transactions: Репозиторий ledger transactions.
+        outbox_events: Репозиторий outbox events.
         transaction_manager: Менеджер транзакций.
 
     Returns:
@@ -141,6 +164,7 @@ def get_create_p2p_transfer_use_case(
         wallets=wallets,
         balances=balances,
         ledger_transactions=ledger_transactions,
+        outbox_events=outbox_events,
         transaction_manager=transaction_manager,
     )
 

@@ -6,6 +6,10 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payflow.core.database import get_async_session
+from payflow.modules.outbox.application.repositories import OutboxEventRepository
+from payflow.modules.outbox.infrastructure.repositories import (
+    SQLAlchemyOutboxEventRepository,
+)
 from payflow.modules.users.application.repositories import UserRepository
 from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
 from payflow.modules.wallets.application import (
@@ -67,6 +71,20 @@ def get_wallet_balance_repository(
     return SQLAlchemyWalletBalanceRepository(session)
 
 
+def get_outbox_event_repository(
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> OutboxEventRepository:
+    """Создает репозиторий outbox events для wallet use cases.
+
+    Args:
+        session: Асинхронная SQLAlchemy-сессия текущего запроса.
+
+    Returns:
+        Репозиторий outbox events.
+    """
+    return SQLAlchemyOutboxEventRepository(session)
+
+
 def get_transaction_manager(
     session: Annotated[AsyncSession, Depends(get_async_session)],
 ) -> TransactionManager:
@@ -88,6 +106,10 @@ def get_create_wallet_use_case(
         WalletBalanceRepository,
         Depends(get_wallet_balance_repository),
     ],
+    outbox_events: Annotated[
+        OutboxEventRepository,
+        Depends(get_outbox_event_repository),
+    ],
     transaction_manager: Annotated[
         TransactionManager,
         Depends(get_transaction_manager),
@@ -99,6 +121,7 @@ def get_create_wallet_use_case(
         users: Репозиторий пользователей.
         wallets: Репозиторий кошельков.
         balances: Репозиторий проекций балансов.
+        outbox_events: Репозиторий outbox events.
         transaction_manager: Менеджер транзакций.
 
     Returns:
@@ -108,6 +131,7 @@ def get_create_wallet_use_case(
         users=users,
         wallets=wallets,
         balances=balances,
+        outbox_events=outbox_events,
         transaction_manager=transaction_manager,
     )
 

@@ -7,7 +7,9 @@ PayFlow P2P - pet-проект приближенного к production финт
 чистой слоистой архитектурой и финансовым ядром на базе ledger. Деньги не
 хранятся во внешних кешах: PostgreSQL остается источником истины для
 постоянного состояния, ledger фиксирует движение средств, а `wallet_balances`
-является атомарно обновляемой проекцией текущего баланса.
+является атомарно обновляемой проекцией текущего баланса. События outbox
+сохраняются в PostgreSQL в той же transaction, что и породившая их
+бизнес-операция.
 
 ## Цели проекта
 
@@ -19,6 +21,8 @@ PayFlow P2P - pet-проект приближенного к production финт
 - Использовать PostgreSQL transactions и row-level locking для сценариев,
   чувствительных к консистентности.
 - Ввести double-entry accounting как основу финансовых операций.
+- Заложить outbox pattern для надежной будущей публикации событий без потери
+  атомарности финансовых операций.
 - Покрыть основное поведение unit, integration и end-to-end тестами.
 - Поддерживать качество кода через ruff и mypy.
 
@@ -50,6 +54,15 @@ PayFlow P2P - pet-проект приближенного к production финт
 - Отклонение перевода при недостаточном балансе.
 - Отклонение перевода между одним и тем же wallet.
 - Идемпотентность P2P-перевода по `operation_id`.
+- Outbox pattern foundation:
+  - таблица `outbox_events` в PostgreSQL;
+  - сохранение события в той же transaction, что и бизнес-операция;
+  - application-level event factory;
+  - repository для pending, failed и published statuses.
+- Текущие outbox events:
+  - `wallet.created`;
+  - `internal_deposit.completed`;
+  - `p2p_transfer.completed`.
 - Unit, integration и end-to-end тесты для реализованных сценариев.
 
 ## Технологический стек
@@ -147,7 +160,8 @@ Modules
   |-- Wallets
   |-- Ledger
   |-- Transfers
-  `-- Payments
+  |-- Payments
+  `-- Outbox
   |
   v
 PostgreSQL
@@ -168,6 +182,8 @@ PostgreSQL
   атомарное обновление балансов.
 - Payments Module: внутренний application-level сценарий internal deposit.
   Публичный external payment provider не реализован.
+- Outbox Module: хранение событий бизнес-операций в PostgreSQL для будущей
+  надежной публикации наружу.
 
 ## Как модули работают вместе
 
@@ -187,6 +203,12 @@ Transfers связывает Auth, Wallets и Ledger. API получает те�
 из JWT, application layer проверяет, что sender wallet принадлежит этому
 пользователю, блокирует balance rows, создает balanced ledger transaction и
 обновляет projections в одной PostgreSQL transaction.
+
+Outbox используется application layer финансовых сценариев. API layer не
+создает события напрямую. Wallet creation, internal deposit и P2P transfer
+добавляют outbox event в той же PostgreSQL transaction, где сохраняются wallet,
+ledger records, transfer record и balance projections. Если transaction
+откатывается, outbox event тоже не сохраняется.
 
 `wallet_balances` - read model для текущих значений баланса. Это не ledger.
 Ledger остается журналом движения денег, а projection нужна для быстрого чтения
@@ -210,6 +232,8 @@ records.
 2. Wallets проверяет, что пользователь существует и доступен.
 3. Wallets создает wallet в запрошенной currency.
 4. Wallets создает balance projection с `0` available и `0` locked.
+5. Wallets создает outbox event `wallet.created` в той же PostgreSQL
+   transaction.
 
 ### C. Ledger posting
 
@@ -236,6 +260,8 @@ Internal deposit - внутренний application-level сценарий. Он
 5. Если source wallet не имеет достаточного available balance, операция
    отклоняется.
 6. Ledger posting и обновление balances выполняются атомарно.
+7. После успешного обновления balances создается outbox event
+   `internal_deposit.completed` в той же PostgreSQL transaction.
 
 CREDIT wallet entry увеличивает balance projection.
 DEBIT wallet entry уменьшает balance projection.
@@ -266,7 +292,42 @@ CREDIT recipient wallet
    - sender balance уменьшается;
    - recipient balance увеличивается.
 8. Transfer получает статус `COMPLETED` и `ledger_transaction_id`.
-9. При ошибке частичные изменения не сохраняются.
+9. Transfers создает outbox event `p2p_transfer.completed` в той же PostgreSQL
+   transaction.
+10. При ошибке частичные изменения и outbox event не сохраняются.
+
+## Outbox pattern
+
+Outbox pattern нужен, чтобы связать изменение бизнес-данных и будущую публикацию
+событий без частичных результатов. PostgreSQL остается источником истины:
+сначала бизнес-операция и outbox event атомарно сохраняются в базе данных, а
+отдельный publisher сможет прочитать pending events и отправить их наружу позже.
+
+Текущая реализация не подключает Kafka, Redis, publisher или worker. Сейчас
+реализован только foundation:
+
+- доменная модель outbox event;
+- SQLAlchemy model и Alembic migration для `outbox_events`;
+- repository для создания и смены статусов событий;
+- event factory для application layer;
+- интеграция создания событий в успешные бизнес-операции.
+
+Событие нельзя публиковать в Kafka прямо внутри бизнес-операции, потому что
+PostgreSQL transaction и Kafka publish не являются одной атомарной операцией.
+Если сначала отправить сообщение в Kafka, а затем база откатится, внешний мир
+увидит событие о несуществующей операции. Если сначала закоммитить базу, а затем
+упасть до публикации в Kafka, бизнес-данные останутся без события. Outbox
+решает это через запись события в PostgreSQL вместе с бизнес-данными и будущую
+повторяемую публикацию из надежного хранилища.
+
+Текущие события:
+
+- `wallet.created` - создан пользовательский wallet и начальная balance
+  projection.
+- `internal_deposit.completed` - internal deposit завершен, ledger transaction
+  создана, balances обновлены.
+- `p2p_transfer.completed` - P2P transfer завершен, ledger transaction создана,
+  balances обновлены.
 
 ## Сценарии использования
 
@@ -364,14 +425,17 @@ make test
 - Transfers API.
 - P2P transfer через balanced ledger transaction.
 - Атомарное обновление balance projection при P2P transfer.
+- Outbox pattern foundation.
+- Outbox events в PostgreSQL.
+- Сохранение outbox events в одной transaction с `wallet.created`,
+  `internal_deposit.completed` и `p2p_transfer.completed`.
 - E2E tests для Auth, Wallets и Transfers endpoints.
 
 Пока не реализовано:
 
 - Публичный deposit API.
 - External payment provider adapter.
-- Outbox pattern.
-- Kafka events.
+- Kafka publisher for outbox events.
 - Redis caching/rate limiting.
 - ClickHouse analytics.
 - Prometheus/Grafana.
@@ -381,10 +445,9 @@ make test
 
 Roadmap Next:
 
-- Outbox pattern.
-- Kafka events.
+- Kafka publisher for outbox events.
 - Redis caching/rate limiting.
-- Payments provider adapter.
+- Payment provider adapter.
 - ClickHouse analytics.
 - Prometheus/Grafana.
 - CI/CD.

@@ -3,6 +3,10 @@
 from typing import Any, cast
 
 from httpx import AsyncClient
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from payflow.modules.outbox.infrastructure.models import OutboxEventModel
 
 
 async def register_user_and_get_access_token(
@@ -52,6 +56,31 @@ def assert_zero_balance(body: dict[str, Any]) -> None:
     assert balance["locked_amount_minor"] == 0
 
 
+async def count_outbox_events(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    event_type: str,
+) -> int:
+    """Считает outbox events заданного типа в E2E-базе.
+
+    Args:
+        session_factory: Фабрика асинхронных SQLAlchemy-сессий.
+        event_type: Тип события outbox.
+
+    Returns:
+        Количество outbox events.
+    """
+    async with session_factory() as session:
+        return int(
+            await session.scalar(
+                select(func.count())
+                .select_from(OutboxEventModel)
+                .where(OutboxEventModel.event_type == event_type)
+            )
+            or 0
+        )
+
+
 async def create_wallet(
     api_client: AsyncClient,
     *,
@@ -81,11 +110,13 @@ async def create_wallet(
 
 async def test_authenticated_user_can_create_wallet(
     api_client: AsyncClient,
+    e2e_async_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Проверяет создание кошелька аутентифицированным пользователем.
 
     Args:
         api_client: HTTP-клиент FastAPI с тестовой базой данных.
+        e2e_async_session_factory: Фабрика асинхронных SQLAlchemy-сессий.
     """
     access_token = await register_user_and_get_access_token(
         api_client,
@@ -102,6 +133,13 @@ async def test_authenticated_user_can_create_wallet(
     assert wallet["currency"] == "USD"
     assert wallet["status"] == "ACTIVE"
     assert_zero_balance(body)
+    assert (
+        await count_outbox_events(
+            e2e_async_session_factory,
+            event_type="wallet.created",
+        )
+        == 1
+    )
 
 
 async def test_unauthenticated_create_wallet_returns_unauthorized(
@@ -119,11 +157,13 @@ async def test_unauthenticated_create_wallet_returns_unauthorized(
 
 async def test_duplicate_wallet_currency_returns_conflict(
     api_client: AsyncClient,
+    e2e_async_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Проверяет конфликт при повторной валюте кошелька пользователя.
 
     Args:
         api_client: HTTP-клиент FastAPI с тестовой базой данных.
+        e2e_async_session_factory: Фабрика асинхронных SQLAlchemy-сессий.
     """
     access_token = await register_user_and_get_access_token(
         api_client,
@@ -138,6 +178,13 @@ async def test_duplicate_wallet_currency_returns_conflict(
     )
 
     assert response.status_code == 409
+    assert (
+        await count_outbox_events(
+            e2e_async_session_factory,
+            event_type="wallet.created",
+        )
+        == 1
+    )
 
 
 async def test_user_can_get_list_of_own_wallets(
