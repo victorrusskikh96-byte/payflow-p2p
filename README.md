@@ -3,52 +3,53 @@
 PayFlow P2P - pet-проект приближенного к production финтех-бэкенда для P2P
 денежных переводов.
 
-Проект создан для практики backend-архитектуры, безопасности аутентификации,
-движения денежных средств и инфраструктурных паттернов, которые часто
-используются в финансовых системах. Он начинается как модульный монолит с
-явными границами модулей и чистой/слоистой архитектурой, оставляя пространство
-для будущего выделения сервисов, если система будет развиваться в сторону
-микросервисов.
+Проект построен как модульный монолит на FastAPI с явными границами модулей,
+чистой слоистой архитектурой и финансовым ядром на базе ledger. Деньги не
+хранятся во внешних кешах: PostgreSQL остается источником истины для
+постоянного состояния, ledger фиксирует движение средств, а `wallet_balances`
+является атомарно обновляемой проекцией текущего баланса.
 
 ## Цели проекта
 
-- Построить backend-архитектуру, приближенную к production, с понятными слоями
-  domain, application, infrastructure и API.
-- Смоделировать денежные операции с явными границами wallet, ledger и
-  transaction.
+- Построить backend-архитектуру с понятными слоями `domain`, `application`,
+  `infrastructure` и `api`.
+- Смоделировать P2P-переводы через wallet, ledger transaction и immutable
+  ledger entries.
 - Реализовать JWT access tokens и аутентификацию через opaque refresh tokens.
-- Использовать транзакции PostgreSQL для сценариев, чувствительных к
-  консистентности.
-- Ввести ledger и double-entry accounting как финансовое ядро системы.
-- Использовать модульный монолит как первый этап перед возможным выделением
-  микросервисов.
+- Использовать PostgreSQL transactions и row-level locking для сценариев,
+  чувствительных к консистентности.
+- Ввести double-entry accounting как основу финансовых операций.
 - Покрыть основное поведение unit, integration и end-to-end тестами.
-- Поддерживать видимое качество кода через линтинг и статическую проверку
-  типов.
-- Подготовить проект к будущей инфраструктуре: Kafka, Redis, ClickHouse,
-  Prometheus, Grafana и CI/CD.
+- Поддерживать качество кода через ruff и mypy.
 
 ## Текущие возможности
 
-- Эндпоинт проверки работоспособности.
-- Домен Users и хранение в PostgreSQL.
-- Учетные данные Auth хранятся отдельно от users.
+- Health endpoints приложения и Auth API.
+- Users domain и хранение пользователей в PostgreSQL.
+- Auth credentials отдельно от users.
 - Хеширование паролей через Argon2.
-- Сценарии регистрации и входа.
+- Регистрация, вход, refresh и logout.
 - JWT access tokens.
 - Opaque refresh tokens с хранением только хеша.
-- Ротация refresh tokens.
-- Auth sessions и отзыв сессий.
-- Эндпоинты Auth API для register, login, refresh, logout и current user.
-- Домен Wallet и хранение.
-- Проекция баланса wallet.
-- Ledger transactions и неизменяемые ledger entries.
-- Валидация double-entry accounting.
+- Ротация refresh tokens и отзыв refresh sessions.
+- Current user dependency для JWT-защищенных endpoints.
+- Wallets module: создание кошельков, список своих кошельков и получение
+  своего кошелька по id.
+- Wallet balance projection с `available` и `locked` суммами.
+- Ledger module: ledger transactions, immutable ledger entries и проверка
+  double-entry accounting.
 - Internal deposit operation на application level.
-- Атомарное обновление ledger и wallet balance projection.
-- Row-level locking для wallet balances.
-- Защита от недостаточного баланса source funding wallet.
-- Идемпотентность internal deposit по `operation_id`.
+- P2P transfers module с публичными JWT-защищенными HTTP endpoints.
+- P2P transfer через Ledger:
+  - `DEBIT` sender wallet;
+  - `CREDIT` recipient wallet.
+- Атомарное обновление wallet balance projection вместе с ledger transaction.
+- Sender balance уменьшается после успешного перевода.
+- Recipient balance увеличивается после успешного перевода.
+- Проверка, что пользователь переводит только со своего wallet.
+- Отклонение перевода при недостаточном балансе.
+- Отклонение перевода между одним и тем же wallet.
+- Идемпотентность P2P-перевода по `operation_id`.
 - Unit, integration и end-to-end тесты для реализованных сценариев.
 
 ## Технологический стек
@@ -81,7 +82,7 @@ tests/e2e/          End-to-end тесты
 - Docker.
 - Docker Compose.
 
-Установить Python-зависимости:
+Установить зависимости:
 
 ```bash
 uv sync
@@ -93,19 +94,19 @@ uv sync
 make up
 ```
 
-Применить миграции базы данных:
+Применить миграции:
 
 ```bash
 make migrate
 ```
 
-Запустить FastAPI-приложение:
+Запустить приложение:
 
 ```bash
 make run
 ```
 
-Запустить проверки во время разработки:
+Запустить проверки:
 
 ```bash
 make test
@@ -114,37 +115,24 @@ make typecheck
 make check
 ```
 
-Остановить локальную инфраструктуру:
+Остановить инфраструктуру:
 
 ```bash
 make down
 ```
 
-Очистить локальные кеши Python и инструментов:
-
-```bash
-make clean
-```
-
 ## Обзор архитектуры
 
-PayFlow P2P начинается как модульный монолит. Код деплоится и запускается как
-одно FastAPI-приложение, при этом бизнес-области разделены на модули с четкими
-границами.
+PayFlow P2P запускается как одно FastAPI-приложение, но бизнес-области
+разделены на модули с независимыми слоями.
 
-Каждый реализованный модуль следует одной внутренней структуре:
-
-- `api` - тонкий слой FastAPI, который обрабатывает HTTP-схемы, зависимости и
-  вызывает сценарии слоя application.
-- `application` - сценарии, границы транзакций и интерфейсы, такие как
-  repositories, token services, hashers и external adapters.
-- `domain` - бизнес-сущности, value objects, правила и domain exceptions.
-- `infrastructure` - SQLAlchemy models, реализации repositories, mappers,
-  transaction managers и adapters для внешних систем.
-
-Слой `domain` намеренно не зависит от FastAPI, SQLAlchemy, Redis, Kafka и
-внешних API. Это сохраняет бизнес-правила тестируемыми и не дает деталям
-фреймворков или инфраструктуры попасть в основную модель.
+- `api` - тонкий FastAPI-слой: HTTP-схемы, dependencies, mapping ошибок в
+  HTTP-коды и вызов use cases.
+- `application` - сценарии, границы транзакций, orchestration и интерфейсы
+  repositories/services.
+- `domain` - сущности, value objects, инварианты и domain exceptions.
+- `infrastructure` - SQLAlchemy models, repositories, mappers, transaction
+  managers и реализации технических интерфейсов.
 
 ```text
 Client
@@ -158,9 +146,8 @@ Modules
   |-- Auth
   |-- Wallets
   |-- Ledger
-  |-- future Transfers
-  |-- future Payments
-  `-- future Analytics
+  |-- Transfers
+  `-- Payments
   |
   v
 PostgreSQL
@@ -168,114 +155,160 @@ PostgreSQL
 
 ## Ответственность модулей
 
-- Users Module: идентичность пользователя, email и статус пользователя.
+- Users Module: идентичность пользователя, email, статус пользователя и
+  хранение user records.
 - Auth Module: credentials, password hash, JWT access token, refresh sessions,
-  ротация refresh token и отзыв сессий.
-- Wallets Module: wallets пользователя, currency, статус wallet и проекция
-  баланса.
+  ротация refresh token, отзыв сессий и current user dependency.
+- Wallets Module: wallets пользователя, currency, статус wallet и balance
+  projection.
 - Ledger Module: неизменяемые финансовые записи, ledger transactions, ledger
-  entries и валидация double-entry accounting.
-- Future Transfers Module: жизненный цикл P2P transfer, идемпотентность и
-  оркестрация ledger posting.
-- Future Payments Module: deposits, withdrawals, provider adapters и webhooks.
+  entries и валидация balanced double-entry transaction.
+- Transfers Module: жизненный цикл P2P transfer, проверка sender wallet
+  ownership, идемпотентность по `operation_id`, создание ledger transaction и
+  атомарное обновление балансов.
+- Payments Module: внутренний application-level сценарий internal deposit.
+  Публичный external payment provider не реализован.
 
 ## Как модули работают вместе
 
-Auth использует Users во время регистрации и аутентификации: Users владеет
-идентичностью пользователя, а Auth владеет credentials, password hashes, access
-tokens и refresh sessions.
+Auth использует Users при регистрации, входе и получении текущего пользователя.
+Users владеет идентичностью, Auth владеет credentials, token issuing и refresh
+sessions.
 
-Wallets использует Users, чтобы создать wallet для конкретного пользователя.
-Ledger концептуально использует Wallets, записывая финансовые движения по
-`wallet_id`. Future Transfers будет использовать Users, Wallets и Ledger для
-оркестрации P2P движения денег. Future Payments будет использовать Wallets и
-Ledger для обработки deposits, withdrawals и callbacks от providers.
+Wallets использует Users, чтобы создать wallet для конкретного пользователя, и
+создает начальную balance projection с нулевыми значениями.
 
-PostgreSQL является источником истины для постоянного состояния. Redis может
-быть добавлен позже для cache, rate limiting, locks или краткоживущей
-координации, но он не должен быть источником истины для денег. Ledger является
-источником истины для движения денег, а `wallet_balances` - это проекция
-текущего состояния wallet.
+Ledger концептуально использует wallet identifiers и фиксирует движение денег
+как immutable records. Каждая финансовая операция должна быть сбалансирована:
+сумма `DEBIT` равна сумме `CREDIT`, а currencies внутри transaction не
+смешиваются.
+
+Transfers связывает Auth, Wallets и Ledger. API получает текущего пользователя
+из JWT, application layer проверяет, что sender wallet принадлежит этому
+пользователю, блокирует balance rows, создает balanced ledger transaction и
+обновляет projections в одной PostgreSQL transaction.
+
+`wallet_balances` - read model для текущих значений баланса. Это не ledger.
+Ledger остается журналом движения денег, а projection нужна для быстрого чтения
+и проверки доступного баланса. Projection обновляется атомарно вместе с ledger
+records.
 
 ## Основные процессы
 
-### A. Регистрация/вход
+### A. Регистрация и вход
 
 1. Клиент отправляет email и password.
-2. Auth проверяет password по password policy или сохраненным credential.
+2. Auth проверяет password policy или сохраненные credentials.
 3. Users создает идентичность пользователя.
 4. Auth сохраняет password hash отдельно от пользователя.
 5. Auth выпускает JWT access token и opaque refresh token.
-6. Raw refresh token не хранится в базе данных. Хранится только его hash.
+6. Raw refresh token не хранится в базе. Хранится только его hash.
 
 ### B. Создание wallet
 
-1. Аутентифицированный пользователь вызывает create wallet.
-2. Wallets проверяет, что пользователь существует.
-3. Wallets создает wallet для запрошенной currency.
-4. Wallets создает начальную balance projection с `0` available и `0` locked.
+1. Аутентифицированный пользователь вызывает `POST /wallets`.
+2. Wallets проверяет, что пользователь существует и доступен.
+3. Wallets создает wallet в запрошенной currency.
+4. Wallets создает balance projection с `0` available и `0` locked.
 
 ### C. Ledger posting
 
-1. Сценарий application получает `operation_id`, `operation_type` и entries.
-2. Ledger проверяет, что transaction сбалансирована.
+1. Application use case получает `operation_id`, `operation_type` и entries.
+2. Ledger проверяет balanced transaction.
 3. Общая сумма `DEBIT` должна быть равна общей сумме `CREDIT`.
-4. Смешивание currencies внутри одной ledger transaction отклоняется.
-5. Ledger records сохраняются как неизменяемые записи.
+4. Смешивание currencies внутри одной transaction отклоняется.
+5. Ledger records сохраняются как immutable entries.
 
 ### D. Internal Deposit
 
-Internal deposit - это внутренний application-level сценарий. Он не является
-публичным payment provider API и не моделирует интеграцию с внешним платежным
+Internal deposit - внутренний application-level сценарий. Он не является
+публичным payment provider API и не моделирует интеграцию с внешним
 провайдером.
 
 1. Операция принимает source funding wallet и target user wallet.
 2. Ledger создает balanced transaction:
-   - `DEBIT` source wallet.
+   - `DEBIT` source wallet;
    - `CREDIT` target wallet.
 3. Wallets обновляет balance projection:
-   - source `available` уменьшается.
+   - source `available` уменьшается;
    - target `available` увеличивается.
-4. Source balance блокируется на уровне строки, чтобы конкурентные операции
-   не могли потратить один и тот же available balance.
-5. Если source funding wallet не имеет достаточного available balance,
-   операция отклоняется.
-6. Ledger posting и обновление wallet balances выполняются атомарно в одной
-   PostgreSQL transaction.
-7. При ошибке частичные изменения не сохраняются.
+4. Source balance блокируется на уровне строки.
+5. Если source wallet не имеет достаточного available balance, операция
+   отклоняется.
+6. Ledger posting и обновление balances выполняются атомарно.
+
+CREDIT wallet entry увеличивает balance projection.
+DEBIT wallet entry уменьшает balance projection.
+
+P2P transfer:
+DEBIT sender wallet
+CREDIT recipient wallet
+
+### E. P2P Transfer
+
+1. Аутентифицированный пользователь вызывает `POST /transfers`.
+2. API берет `sender_user_id` только из JWT current user.
+3. Application layer проверяет:
+   - sender wallet существует;
+   - sender wallet принадлежит текущему пользователю;
+   - recipient wallet существует;
+   - wallets активны;
+   - wallets и request currency совпадают;
+   - sender и recipient wallets различаются;
+   - `operation_id` еще не использован;
+   - sender wallet имеет достаточный available balance.
+4. Sender и recipient balance rows блокируются в стабильном порядке.
+5. Transfers создает P2P transfer record.
+6. Ledger создает balanced transaction:
+   - `DEBIT` sender wallet;
+   - `CREDIT` recipient wallet.
+7. Wallet balance projection обновляется атомарно:
+   - sender balance уменьшается;
+   - recipient balance увеличивается.
+8. Transfer получает статус `COMPLETED` и `ledger_transaction_id`.
+9. При ошибке частичные изменения не сохраняются.
 
 ## Сценарии использования
 
-### Успешный сценарий: регистрация пользователя, создание wallet и internal deposit
+### Успешный P2P-перевод
 
-1. Пользователь регистрируется с email и password.
-2. Auth создает user identity и credentials.
-3. Пользователь получает access и refresh tokens.
-4. Пользователь создает RUB wallet.
-5. Internal funding wallet имеет available balance.
-6. Internal deposit публикует balanced ledger transaction:
-   `DEBIT` source funding wallet и `CREDIT` target user wallet.
-7. Wallet balance projection обновляется в той же PostgreSQL transaction.
-8. Target user wallet получает увеличение available balance.
+1. Пользователь регистрируется и получает access token.
+2. Пользователь создает wallet.
+3. Recipient имеет wallet в той же currency.
+4. Sender wallet имеет достаточный available balance.
+5. Пользователь вызывает `POST /transfers`.
+6. Transfers создает balanced ledger transaction:
+   `DEBIT` sender wallet и `CREDIT` recipient wallet.
+7. Balance projections обновляются в той же PostgreSQL transaction.
+8. Sender available balance уменьшается.
+9. Recipient available balance увеличивается.
 
-Публичные API для deposit и transfer пока не реализованы. Internal deposit
-реализован как внутренний application-level сценарий.
+### Недостаточный баланс
 
-### Неуспешный сценарий: недостаточный баланс source funding wallet
+1. Пользователь вызывает `POST /transfers`.
+2. Sender wallet найден и принадлежит текущему пользователю.
+3. Available balance меньше суммы перевода.
+4. Операция отклоняется.
+5. Ledger transaction не создается.
+6. Balance projections не изменяются.
 
-1. Слой application пытается выполнить internal deposit.
-2. Source funding wallet не имеет достаточного available balance.
-3. Операция отклоняется до сохранения финансового движения.
-4. Ledger transaction не сохраняется.
-5. Target wallet balance не изменяется.
+### Попытка перевода с чужого wallet
 
-Дополнительные ошибочные сценарии включают несбалансированную ledger
-transaction, дублирование wallet currency для одного и того же пользователя,
-invalid password, а также invalid или expired refresh token.
+1. Пользователь вызывает `POST /transfers` и передает чужой `sender_wallet_id`.
+2. Application layer сравнивает owner wallet с current user.
+3. Операция отклоняется безопасной ошибкой.
+4. Деньги и ledger records не меняются.
+
+### Повторный operation_id
+
+1. Клиент повторяет `POST /transfers` с уже использованным `operation_id`.
+2. Application layer обнаруживает существующий transfer.
+3. Операция отклоняется конфликтом.
+4. Повторное движение денег не создается.
 
 ## Обзор API
 
-Текущие публичные HTTP-эндпоинты:
+Публичные HTTP endpoints:
 
 - `GET /health` - проверка работоспособности приложения.
 - `GET /auth/health` - проверка работоспособности Auth API.
@@ -287,9 +320,16 @@ invalid password, а также invalid или expired refresh token.
 - `POST /wallets` - создать wallet для текущего пользователя.
 - `GET /wallets/me` - вернуть wallets текущего пользователя.
 - `GET /wallets/{wallet_id}` - вернуть wallet по id для текущего пользователя.
+- `POST /transfers` - создать P2P transfer от текущего пользователя.
+- `GET /transfers/me` - вернуть исходящие transfers текущего пользователя.
+- `GET /transfers/{transfer_id}` - вернуть transfer текущего пользователя по id.
 
-Публичных HTTP endpoints для ledger пока нет. Ledger posting сейчас доступен на
-уровнях domain и application и покрыт тестами.
+`POST /transfers` требует JWT access token. `sender_user_id` не принимается из
+request body и всегда берется из current user dependency. Если transfer не
+найден или принадлежит другому пользователю, API возвращает безопасный `404`.
+
+Публичных HTTP endpoints для ledger нет. Ledger posting доступен через
+application layer реализованных финансовых сценариев.
 
 ## Тестирование
 
@@ -315,32 +355,36 @@ make test
 - Инфраструктура базы данных.
 - Users.
 - Auth.
-- Базовая основа токенов.
 - Auth API.
 - Wallets.
-- Базовая основа Ledger.
-- Internal deposit operation.
+- Wallets API.
+- Ledger.
+- Internal deposit operation на application level.
+- Transfers domain, repository и use case.
+- Transfers API.
+- P2P transfer через balanced ledger transaction.
+- Атомарное обновление balance projection при P2P transfer.
+- E2E tests для Auth, Wallets и Transfers endpoints.
 
 Пока не реализовано:
 
-- Оркестрация P2P transfers.
 - Публичный deposit API.
-- Интеграция с external payment provider.
-
-Wallet balance projection - это read model для текущих значений баланса wallet.
-Это не ledger. Internal deposit атомарно создает ledger records и обновляет
-wallet balance projection внутри одной PostgreSQL transaction.
+- External payment provider adapter.
+- Outbox pattern.
+- Kafka events.
+- Redis caching/rate limiting.
+- ClickHouse analytics.
+- Prometheus/Grafana.
+- CI/CD.
 
 ## План развития
 
-Дальше:
+Roadmap Next:
 
-- P2P transfers.
-- Идемпотентность для external operations.
 - Outbox pattern.
-- Kafka.
-- Redis.
-- Адаптер платежного провайдера.
-- Аналитика ClickHouse.
+- Kafka events.
+- Redis caching/rate limiting.
+- Payments provider adapter.
+- ClickHouse analytics.
 - Prometheus/Grafana.
 - CI/CD.

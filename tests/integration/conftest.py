@@ -23,6 +23,7 @@ from payflow.modules.ledger.infrastructure.models import (
     LedgerEntryModel,
     LedgerTransactionModel,
 )
+from payflow.modules.transfers.infrastructure.models import TransferModel
 from payflow.modules.users.infrastructure.models import UserModel
 from payflow.modules.wallets.infrastructure.models import (
     WalletBalanceModel,
@@ -94,6 +95,7 @@ async def clean_database(
         Асинхронный итератор управления очисткой базы.
     """
     async with async_session_factory() as session:
+        await session.execute(delete(TransferModel))
         await session.execute(delete(LedgerEntryModel))
         await session.execute(delete(LedgerTransactionModel))
         await session.execute(delete(WalletBalanceModel))
@@ -106,6 +108,7 @@ async def clean_database(
     yield
 
     async with async_session_factory() as session:
+        await session.execute(delete(TransferModel))
         await session.execute(delete(LedgerEntryModel))
         await session.execute(delete(LedgerTransactionModel))
         await session.execute(delete(WalletBalanceModel))

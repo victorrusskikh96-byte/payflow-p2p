@@ -21,6 +21,11 @@ from payflow.modules.auth.infrastructure.models import (
     AuthCredentialsModel,
     AuthSessionModel,
 )
+from payflow.modules.ledger.infrastructure.models import (
+    LedgerEntryModel,
+    LedgerTransactionModel,
+)
+from payflow.modules.transfers.infrastructure.models import TransferModel
 from payflow.modules.users.infrastructure.models import UserModel
 from payflow.modules.wallets.infrastructure.models import (
     WalletBalanceModel,
@@ -77,6 +82,9 @@ async def clean_auth_database(
         Асинхронный итератор управления очисткой базы.
     """
     async with e2e_async_session_factory() as session:
+        await session.execute(delete(LedgerEntryModel))
+        await session.execute(delete(TransferModel))
+        await session.execute(delete(LedgerTransactionModel))
         await session.execute(delete(WalletBalanceModel))
         await session.execute(delete(WalletModel))
         await session.execute(delete(AuthSessionModel))
@@ -87,6 +95,9 @@ async def clean_auth_database(
     yield
 
     async with e2e_async_session_factory() as session:
+        await session.execute(delete(LedgerEntryModel))
+        await session.execute(delete(TransferModel))
+        await session.execute(delete(LedgerTransactionModel))
         await session.execute(delete(WalletBalanceModel))
         await session.execute(delete(WalletModel))
         await session.execute(delete(AuthSessionModel))
