@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from payflow.modules.wallets.infrastructure.models import WalletBalanceModel
+from payflow.modules.financial_core.infrastructure.models import WalletBalanceModel
 from tests.e2e.test_wallet_endpoints import (
     auth_headers,
     count_outbox_events,

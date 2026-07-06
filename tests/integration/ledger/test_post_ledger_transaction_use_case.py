@@ -6,35 +6,35 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from payflow.modules.ledger.application.exceptions import (
+from payflow.modules.financial_core.application.ledger.exceptions import (
     LedgerTransactionAlreadyExistsError,
 )
-from payflow.modules.ledger.application.use_cases import (
+from payflow.modules.financial_core.application.ledger.use_cases import (
     PostLedgerEntryCommand,
     PostLedgerTransactionCommand,
     PostLedgerTransactionUseCase,
 )
-from payflow.modules.ledger.domain import (
+from payflow.modules.financial_core.domain.ledger import (
     LedgerEntryDirection,
     LedgerOperationType,
     UnbalancedLedgerTransactionError,
 )
-from payflow.modules.ledger.infrastructure.models import (
+from payflow.modules.financial_core.domain.wallets import Wallet
+from payflow.modules.financial_core.infrastructure.models import (
     LedgerEntryModel,
     LedgerTransactionModel,
 )
-from payflow.modules.ledger.infrastructure.repositories import (
+from payflow.modules.financial_core.infrastructure.repositories.ledger import (
     SQLAlchemyLedgerTransactionRepository,
 )
-from payflow.modules.ledger.infrastructure.transactions import (
-    SQLAlchemyTransactionManager,
+from payflow.modules.financial_core.infrastructure.repositories.wallets import (
+    SQLAlchemyWalletRepository,
+)
+from payflow.modules.financial_core.infrastructure.transactions import (
+    SQLAlchemyLedgerTransactionManager as SQLAlchemyTransactionManager,
 )
 from payflow.modules.users.domain import User
 from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
-from payflow.modules.wallets.domain import Wallet
-from payflow.modules.wallets.infrastructure.repositories import (
-    SQLAlchemyWalletRepository,
-)
 
 
 async def create_user(async_session: AsyncSession) -> User:

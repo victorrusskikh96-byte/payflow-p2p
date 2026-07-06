@@ -8,29 +8,29 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from payflow.modules.ledger.application.exceptions import (
+from payflow.modules.financial_core.application.ledger.exceptions import (
     LedgerTransactionAlreadyExistsError,
 )
-from payflow.modules.ledger.domain import (
+from payflow.modules.financial_core.domain.ledger import (
     LedgerEntry,
     LedgerEntryDirection,
     LedgerOperationType,
     LedgerTransaction,
     LedgerTransactionStatus,
 )
-from payflow.modules.ledger.infrastructure.models import (
+from payflow.modules.financial_core.domain.wallets import Wallet
+from payflow.modules.financial_core.infrastructure.models import (
     LedgerEntryModel,
     LedgerTransactionModel,
 )
-from payflow.modules.ledger.infrastructure.repositories import (
+from payflow.modules.financial_core.infrastructure.repositories.ledger import (
     SQLAlchemyLedgerTransactionRepository,
+)
+from payflow.modules.financial_core.infrastructure.repositories.wallets import (
+    SQLAlchemyWalletRepository,
 )
 from payflow.modules.users.domain import User
 from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
-from payflow.modules.wallets.domain import Wallet
-from payflow.modules.wallets.infrastructure.repositories import (
-    SQLAlchemyWalletRepository,
-)
 
 
 async def create_user(async_session: AsyncSession) -> User:

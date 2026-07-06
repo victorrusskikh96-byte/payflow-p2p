@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from payflow.modules.wallets.domain import (
+from payflow.modules.financial_core.domain.wallets import (
     BalanceProjection,
     InsufficientFundsError,
     InvalidBalanceAmountError,

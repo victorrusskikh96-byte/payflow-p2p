@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from payflow.modules.transfers.domain import (
+from payflow.modules.financial_core.domain.transfers import (
     InvalidTransferAmountError,
     InvalidTransferCurrencyError,
     InvalidTransferStatusError,

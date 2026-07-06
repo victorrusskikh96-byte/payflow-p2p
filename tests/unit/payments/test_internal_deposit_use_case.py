@@ -5,22 +5,24 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from payflow.modules.ledger.domain import (
-    LedgerEntry,
-    LedgerEntryDirection,
-    LedgerOperationType,
-    LedgerTransaction,
-)
-from payflow.modules.outbox.domain import OutboxEvent, OutboxEventStatus
-from payflow.modules.payments.application.exceptions import (
+from payflow.modules.financial_core.application.payments.exceptions import (
     DuplicateInternalDepositOperationError,
     InsufficientSourceFundsError,
     InvalidInternalDepositAmountError,
     SourceWalletEqualsTargetWalletError,
     WalletCurrencyMismatchError,
 )
-from payflow.modules.payments.application.use_cases import InternalDepositUseCase
-from payflow.modules.wallets.domain import (
+from payflow.modules.financial_core.application.payments.use_cases import (
+    InternalDepositUseCase,
+)
+from payflow.modules.financial_core.domain.ledger import (
+    LedgerEntry,
+    LedgerEntryDirection,
+    LedgerOperationType,
+    LedgerTransaction,
+)
+from payflow.modules.financial_core.domain.outbox import OutboxEvent, OutboxEventStatus
+from payflow.modules.financial_core.domain.wallets import (
     BalanceProjection,
     Wallet,
     WalletStatus,

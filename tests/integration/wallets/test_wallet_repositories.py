@@ -7,23 +7,23 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from payflow.modules.users.domain import User
-from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
-from payflow.modules.wallets.domain import (
+from payflow.modules.financial_core.domain.wallets import (
     BalanceProjection,
     InsufficientFundsError,
     InvalidBalanceUpdateError,
     Wallet,
     WalletStatus,
 )
-from payflow.modules.wallets.infrastructure.models import (
+from payflow.modules.financial_core.infrastructure.models import (
     WalletBalanceModel,
     WalletModel,
 )
-from payflow.modules.wallets.infrastructure.repositories import (
+from payflow.modules.financial_core.infrastructure.repositories.wallets import (
     SQLAlchemyWalletBalanceRepository,
     SQLAlchemyWalletRepository,
 )
+from payflow.modules.users.domain import User
+from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
 
 
 async def create_user(async_session: AsyncSession) -> User:

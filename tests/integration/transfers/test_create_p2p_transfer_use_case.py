@@ -6,49 +6,55 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from payflow.modules.ledger.domain import (
+from payflow.modules.financial_core.application.transfers.exceptions import (
+    InsufficientTransferFundsError,
+    TransferWalletCurrencyMismatchError,
+    TransferWalletOwnershipError,
+)
+from payflow.modules.financial_core.application.transfers.use_cases import (
+    CreateP2PTransferUseCase,
+)
+from payflow.modules.financial_core.domain.ledger import (
     LedgerEntry,
     LedgerEntryDirection,
     LedgerOperationType,
     LedgerTransaction,
 )
-from payflow.modules.ledger.infrastructure.models import (
-    LedgerEntryModel,
-    LedgerTransactionModel,
-)
-from payflow.modules.ledger.infrastructure.repositories import (
-    SQLAlchemyLedgerTransactionRepository,
-)
-from payflow.modules.outbox.infrastructure.models import OutboxEventModel
-from payflow.modules.outbox.infrastructure.repositories import (
-    SQLAlchemyOutboxEventRepository,
-)
-from payflow.modules.transfers.application.exceptions import (
-    InsufficientTransferFundsError,
-    TransferWalletCurrencyMismatchError,
-    TransferWalletOwnershipError,
-)
-from payflow.modules.transfers.application.use_cases import CreateP2PTransferUseCase
-from payflow.modules.transfers.domain import (
+from payflow.modules.financial_core.domain.transfers import (
     DuplicateTransferOperationError,
     SameTransferWalletsError,
     TransferStatus,
 )
-from payflow.modules.transfers.infrastructure.models import TransferModel
-from payflow.modules.transfers.infrastructure.repositories import (
+from payflow.modules.financial_core.domain.wallets import (
+    BalanceProjection,
+    Wallet,
+    WalletStatus,
+)
+from payflow.modules.financial_core.infrastructure.models import (
+    LedgerEntryModel,
+    LedgerTransactionModel,
+    OutboxEventModel,
+    TransferModel,
+    WalletBalanceModel,
+)
+from payflow.modules.financial_core.infrastructure.repositories.ledger import (
+    SQLAlchemyLedgerTransactionRepository,
+)
+from payflow.modules.financial_core.infrastructure.repositories.outbox import (
+    SQLAlchemyOutboxEventRepository,
+)
+from payflow.modules.financial_core.infrastructure.repositories.transfers import (
     SQLAlchemyTransferRepository,
 )
-from payflow.modules.transfers.infrastructure.transactions import (
+from payflow.modules.financial_core.infrastructure.repositories.wallets import (
+    SQLAlchemyWalletBalanceRepository,
+    SQLAlchemyWalletRepository,
+)
+from payflow.modules.financial_core.infrastructure.transactions import (
     SQLAlchemyTransactionManager,
 )
 from payflow.modules.users.domain import User
 from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
-from payflow.modules.wallets.domain import BalanceProjection, Wallet, WalletStatus
-from payflow.modules.wallets.infrastructure.models import WalletBalanceModel
-from payflow.modules.wallets.infrastructure.repositories import (
-    SQLAlchemyWalletBalanceRepository,
-    SQLAlchemyWalletRepository,
-)
 
 
 class FailingRecipientSaveWalletBalanceRepository(SQLAlchemyWalletBalanceRepository):

@@ -3,7 +3,9 @@
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from payflow.modules.outbox.application.event_factory import OutboxEventFactory
+from payflow.modules.financial_core.application.outbox.event_factory import (
+    OutboxEventFactory,
+)
 
 
 def test_wallet_created_has_correct_event_type() -> None:

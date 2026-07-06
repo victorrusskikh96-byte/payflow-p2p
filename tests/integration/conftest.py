@@ -19,17 +19,15 @@ from payflow.modules.auth.infrastructure.models import (
     AuthCredentialsModel,
     AuthSessionModel,
 )
-from payflow.modules.ledger.infrastructure.models import (
+from payflow.modules.financial_core.infrastructure.models import (
     LedgerEntryModel,
     LedgerTransactionModel,
-)
-from payflow.modules.outbox.infrastructure.models import OutboxEventModel
-from payflow.modules.transfers.infrastructure.models import TransferModel
-from payflow.modules.users.infrastructure.models import UserModel
-from payflow.modules.wallets.infrastructure.models import (
+    OutboxEventModel,
+    TransferModel,
     WalletBalanceModel,
     WalletModel,
 )
+from payflow.modules.users.infrastructure.models import UserModel
 
 
 @pytest.fixture(scope="session", autouse=True)

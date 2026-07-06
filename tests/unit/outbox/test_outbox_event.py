@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from payflow.modules.outbox.domain import (
+from payflow.modules.financial_core.domain.outbox import (
     InvalidOutboxEventError,
     OutboxEvent,
     OutboxEventAlreadyPublishedError,

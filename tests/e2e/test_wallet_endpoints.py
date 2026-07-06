@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from payflow.modules.outbox.infrastructure.models import OutboxEventModel
+from payflow.modules.financial_core.infrastructure.models import OutboxEventModel
 
 
 async def register_user_and_get_access_token(

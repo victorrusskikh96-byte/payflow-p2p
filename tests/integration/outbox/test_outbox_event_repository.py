@@ -5,9 +5,13 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from payflow.modules.outbox.domain import JsonPayload, OutboxEvent, OutboxEventStatus
-from payflow.modules.outbox.infrastructure.models import OutboxEventModel
-from payflow.modules.outbox.infrastructure.repositories import (
+from payflow.modules.financial_core.domain.outbox import (
+    JsonPayload,
+    OutboxEvent,
+    OutboxEventStatus,
+)
+from payflow.modules.financial_core.infrastructure.models import OutboxEventModel
+from payflow.modules.financial_core.infrastructure.repositories.outbox import (
     SQLAlchemyOutboxEventRepository,
 )
 

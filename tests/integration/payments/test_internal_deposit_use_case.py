@@ -6,37 +6,39 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from payflow.modules.ledger.domain import (
-    LedgerEntryDirection,
-    LedgerOperationType,
-)
-from payflow.modules.ledger.infrastructure.models import (
-    LedgerEntryModel,
-    LedgerTransactionModel,
-)
-from payflow.modules.ledger.infrastructure.repositories import (
-    SQLAlchemyLedgerTransactionRepository,
-)
-from payflow.modules.outbox.infrastructure.models import OutboxEventModel
-from payflow.modules.outbox.infrastructure.repositories import (
-    SQLAlchemyOutboxEventRepository,
-)
-from payflow.modules.payments.application.exceptions import (
+from payflow.modules.financial_core.application.payments.exceptions import (
     DuplicateInternalDepositOperationError,
     InsufficientSourceFundsError,
 )
-from payflow.modules.payments.application.use_cases import InternalDepositUseCase
-from payflow.modules.payments.infrastructure.transactions import (
+from payflow.modules.financial_core.application.payments.use_cases import (
+    InternalDepositUseCase,
+)
+from payflow.modules.financial_core.domain.ledger import (
+    LedgerEntryDirection,
+    LedgerOperationType,
+)
+from payflow.modules.financial_core.domain.wallets import BalanceProjection, Wallet
+from payflow.modules.financial_core.infrastructure.models import (
+    LedgerEntryModel,
+    LedgerTransactionModel,
+    OutboxEventModel,
+    WalletBalanceModel,
+)
+from payflow.modules.financial_core.infrastructure.repositories.ledger import (
+    SQLAlchemyLedgerTransactionRepository,
+)
+from payflow.modules.financial_core.infrastructure.repositories.outbox import (
+    SQLAlchemyOutboxEventRepository,
+)
+from payflow.modules.financial_core.infrastructure.repositories.wallets import (
+    SQLAlchemyWalletBalanceRepository,
+    SQLAlchemyWalletRepository,
+)
+from payflow.modules.financial_core.infrastructure.transactions import (
     SQLAlchemyTransactionManager,
 )
 from payflow.modules.users.domain import User
 from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
-from payflow.modules.wallets.domain import BalanceProjection, Wallet
-from payflow.modules.wallets.infrastructure.models import WalletBalanceModel
-from payflow.modules.wallets.infrastructure.repositories import (
-    SQLAlchemyWalletBalanceRepository,
-    SQLAlchemyWalletRepository,
-)
 
 
 class FailingTargetSaveWalletBalanceRepository(SQLAlchemyWalletBalanceRepository):

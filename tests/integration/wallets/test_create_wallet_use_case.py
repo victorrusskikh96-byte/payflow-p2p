@@ -6,26 +6,28 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from payflow.modules.outbox.domain import OutboxEvent
-from payflow.modules.outbox.infrastructure.models import OutboxEventModel
-from payflow.modules.outbox.infrastructure.repositories import (
-    SQLAlchemyOutboxEventRepository,
+from payflow.modules.financial_core.application.wallets.use_cases import (
+    CreateWalletUseCase,
 )
-from payflow.modules.users.domain import User
-from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
-from payflow.modules.wallets.application.use_cases import CreateWalletUseCase
-from payflow.modules.wallets.domain import WalletAlreadyExistsError
-from payflow.modules.wallets.infrastructure.models import (
+from payflow.modules.financial_core.domain.outbox import OutboxEvent
+from payflow.modules.financial_core.domain.wallets import WalletAlreadyExistsError
+from payflow.modules.financial_core.infrastructure.models import (
+    OutboxEventModel,
     WalletBalanceModel,
     WalletModel,
 )
-from payflow.modules.wallets.infrastructure.repositories import (
+from payflow.modules.financial_core.infrastructure.repositories.outbox import (
+    SQLAlchemyOutboxEventRepository,
+)
+from payflow.modules.financial_core.infrastructure.repositories.wallets import (
     SQLAlchemyWalletBalanceRepository,
     SQLAlchemyWalletRepository,
 )
-from payflow.modules.wallets.infrastructure.transactions import (
+from payflow.modules.financial_core.infrastructure.transactions import (
     SQLAlchemyTransactionManager,
 )
+from payflow.modules.users.domain import User
+from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
 
 
 class FailingOutboxEventRepository(SQLAlchemyOutboxEventRepository):

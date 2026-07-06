@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from payflow.modules.ledger.domain import (
+from payflow.modules.financial_core.domain.ledger import (
     InvalidLedgerAmountError,
     InvalidLedgerCurrencyError,
     InvalidLedgerEntriesError,

@@ -5,15 +5,15 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from payflow.modules.ledger.application.exceptions import (
+from payflow.modules.financial_core.application.ledger.exceptions import (
     LedgerTransactionAlreadyExistsError,
 )
-from payflow.modules.ledger.application.use_cases import (
+from payflow.modules.financial_core.application.ledger.use_cases import (
     PostLedgerEntryCommand,
     PostLedgerTransactionCommand,
     PostLedgerTransactionUseCase,
 )
-from payflow.modules.ledger.domain import (
+from payflow.modules.financial_core.domain.ledger import (
     InvalidLedgerAmountError,
     InvalidLedgerEntriesError,
     LedgerEntry,

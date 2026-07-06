@@ -5,28 +5,34 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from payflow.modules.ledger.domain import (
-    LedgerEntry,
-    LedgerEntryDirection,
-    LedgerOperationType,
-    LedgerTransaction,
-)
-from payflow.modules.outbox.domain import OutboxEvent, OutboxEventStatus
-from payflow.modules.transfers.application.exceptions import (
+from payflow.modules.financial_core.application.transfers.exceptions import (
     InactiveTransferWalletError,
     InsufficientTransferFundsError,
     TransferWalletCurrencyMismatchError,
     TransferWalletOwnershipError,
 )
-from payflow.modules.transfers.application.use_cases import CreateP2PTransferUseCase
-from payflow.modules.transfers.domain import (
+from payflow.modules.financial_core.application.transfers.use_cases import (
+    CreateP2PTransferUseCase,
+)
+from payflow.modules.financial_core.domain.ledger import (
+    LedgerEntry,
+    LedgerEntryDirection,
+    LedgerOperationType,
+    LedgerTransaction,
+)
+from payflow.modules.financial_core.domain.outbox import OutboxEvent, OutboxEventStatus
+from payflow.modules.financial_core.domain.transfers import (
     DuplicateTransferOperationError,
     SameTransferWalletsError,
     Transfer,
     TransferNotFoundError,
     TransferStatus,
 )
-from payflow.modules.wallets.domain import BalanceProjection, Wallet, WalletStatus
+from payflow.modules.financial_core.domain.wallets import (
+    BalanceProjection,
+    Wallet,
+    WalletStatus,
+)
 
 
 class InMemoryTransferRepository:
