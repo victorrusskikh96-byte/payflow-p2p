@@ -1,4 +1,4 @@
-.PHONY: up run migrate revision test lint format typecheck check down clean
+.PHONY: up run migrate revision dev-deposit test lint format typecheck check down clean
 
 # Project and infrastructure
 up:
@@ -12,6 +12,18 @@ migrate:
 
 revision:
 	uv run alembic revision --autogenerate -m "$(m)"
+
+dev-deposit:
+ifndef wallet_id
+	$(error wallet_id is required)
+endif
+ifndef amount
+	$(error amount is required)
+endif
+ifndef currency
+	$(error currency is required)
+endif
+	uv run python -m payflow.devtools.internal_deposit --wallet-id "$(wallet_id)" --amount-minor "$(amount)" --currency "$(currency)" $(if $(operation_id),--operation-id "$(operation_id)")
 
 # Tests and checks
 test:

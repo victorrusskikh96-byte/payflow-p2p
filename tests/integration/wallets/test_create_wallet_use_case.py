@@ -10,10 +10,18 @@ from payflow.modules.financial_core.application.events import (
     OutboxEventData,
     OutboxEventRecord,
 )
+from payflow.modules.financial_core.application.wallets.exceptions import (
+    WalletBalanceProjectionCreationFailedError,
+    WalletOutboxEventCreationFailedError,
+)
 from payflow.modules.financial_core.application.wallets.use_cases import (
     CreateWalletUseCase,
 )
-from payflow.modules.financial_core.domain.wallets import WalletAlreadyExistsError
+from payflow.modules.financial_core.domain.wallets import (
+    BalanceProjection,
+    WalletAlreadyExistsError,
+    WalletOwnerUnavailableError,
+)
 from payflow.modules.financial_core.infrastructure.models import (
     OutboxEventModel,
     WalletBalanceModel,
@@ -29,7 +37,7 @@ from payflow.modules.financial_core.infrastructure.repositories.wallets import (
 from payflow.modules.financial_core.infrastructure.transactions import (
     SQLAlchemyTransactionManager,
 )
-from payflow.modules.users.domain import User
+from payflow.modules.users.domain import User, UserStatus
 from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
 
 
@@ -51,28 +59,56 @@ class FailingOutboxEventRepository(SQLAlchemyOutboxEventRepository):
         raise RuntimeError("Forced wallet outbox failure.")
 
 
-async def create_user(async_session: AsyncSession) -> User:
+class FailingWalletBalanceRepository(SQLAlchemyWalletBalanceRepository):
+    """Имитирует сбой создания начальной balance projection."""
+
+    async def create_initial(
+        self,
+        balance: BalanceProjection,
+    ) -> BalanceProjection:
+        """Выбрасывает RuntimeError вместо сохранения balance projection.
+
+        Args:
+            balance: Начальная проекция баланса.
+
+        Returns:
+            Сохраненная проекция баланса.
+
+        Raises:
+            RuntimeError: Всегда, чтобы проверить rollback операции.
+        """
+        raise RuntimeError("Forced wallet balance creation failure.")
+
+
+async def create_user(
+    async_session: AsyncSession,
+    *,
+    status: UserStatus = UserStatus.ACTIVE,
+) -> User:
     """Создает пользователя для integration-теста wallets.
 
     Args:
         async_session: Асинхронная SQLAlchemy-сессия.
+        status: Статус создаваемого пользователя.
 
     Returns:
         Созданный пользователь.
     """
     users = SQLAlchemyUserRepository(async_session)
-    return await users.create(User(email=f"{uuid4()}@example.com"))
+    return await users.create(User(email=f"{uuid4()}@example.com", status=status))
 
 
 def make_use_case(
     async_session: AsyncSession,
     *,
+    fail_balance: bool = False,
     fail_outbox: bool = False,
 ) -> CreateWalletUseCase:
     """Создает use case открытия кошелька с SQLAlchemy dependencies.
 
     Args:
         async_session: Асинхронная SQLAlchemy-сессия.
+        fail_balance: Нужно ли заменить balance repository на падающий.
         fail_outbox: Нужно ли заменить outbox repository на падающий.
 
     Returns:
@@ -83,10 +119,15 @@ def make_use_case(
         if fail_outbox
         else SQLAlchemyOutboxEventRepository(async_session)
     )
+    balances = (
+        FailingWalletBalanceRepository(async_session)
+        if fail_balance
+        else SQLAlchemyWalletBalanceRepository(async_session)
+    )
     return CreateWalletUseCase(
         users=SQLAlchemyUserRepository(async_session),
         wallets=SQLAlchemyWalletRepository(async_session),
-        balances=SQLAlchemyWalletBalanceRepository(async_session),
+        balances=balances,
         outbox_events=outbox_events,
         transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
@@ -212,10 +253,45 @@ async def test_duplicate_wallet_creation_does_not_create_extra_outbox_event(
     assert await count_outbox_events(async_session, event_type="wallet.created") == 1
 
 
+async def test_wallet_creation_rejects_missing_user_without_side_effects(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет отказ для отсутствующего владельца без частичных записей.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    with pytest.raises(WalletOwnerUnavailableError):
+        await make_use_case(async_session).execute(user_id=uuid4(), currency="USD")
+
+    assert await count_wallets(async_session) == 0
+    assert await count_balances(async_session) == 0
+    assert await count_outbox_events(async_session, event_type="wallet.created") == 0
+
+
+async def test_wallet_creation_rejects_blocked_user_without_side_effects(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет отказ для BLOCKED владельца без частичных записей.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    user = await create_user(async_session, status=UserStatus.BLOCKED)
+    await async_session.commit()
+
+    with pytest.raises(WalletOwnerUnavailableError):
+        await make_use_case(async_session).execute(user_id=user.id, currency="USD")
+
+    assert await count_wallets(async_session) == 0
+    assert await count_balances(async_session) == 0
+    assert await count_outbox_events(async_session, event_type="wallet.created") == 0
+
+
 async def test_failed_outbox_creation_rolls_back_wallet_and_balance(
     async_session: AsyncSession,
 ) -> None:
-    """Проверяет rollback wallet и balance при сбое outbox event.
+    """Проверяет managed error и rollback при сбое outbox event.
 
     Args:
         async_session: Асинхронная SQLAlchemy-сессия.
@@ -223,8 +299,31 @@ async def test_failed_outbox_creation_rolls_back_wallet_and_balance(
     user = await create_user(async_session)
     await async_session.commit()
 
-    with pytest.raises(RuntimeError, match="Forced wallet outbox failure"):
+    with pytest.raises(WalletOutboxEventCreationFailedError):
         await make_use_case(async_session, fail_outbox=True).execute(
+            user_id=user.id,
+            currency="USD",
+        )
+
+    async_session.expire_all()
+    assert await count_wallets(async_session) == 0
+    assert await count_balances(async_session) == 0
+    assert await count_outbox_events(async_session, event_type="wallet.created") == 0
+
+
+async def test_failed_balance_creation_rolls_back_wallet_without_outbox(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed error и rollback при сбое создания balance projection.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    user = await create_user(async_session)
+    await async_session.commit()
+
+    with pytest.raises(WalletBalanceProjectionCreationFailedError):
+        await make_use_case(async_session, fail_balance=True).execute(
             user_id=user.id,
             currency="USD",
         )

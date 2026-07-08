@@ -27,3 +27,19 @@ class InsufficientTransferFundsError(TransfersApplicationError):
 
 class InactiveTransferWalletError(TransfersApplicationError):
     """Сообщает, что один из кошельков перевода не активен."""
+
+
+class TransferCreationFailedError(TransfersApplicationError):
+    """Сообщает, что P2P-перевод не удалось сохранить."""
+
+
+class TransferLedgerCreationFailedError(TransfersApplicationError):
+    """Сообщает, что ledger transaction P2P-перевода не удалось сохранить."""
+
+
+class TransferBalanceUpdateFailedError(TransfersApplicationError):
+    """Сообщает, что balance projection P2P-перевода не удалось обновить."""
+
+
+class TransferOutboxEventCreationFailedError(TransfersApplicationError):
+    """Сообщает, что outbox event P2P-перевода не удалось сохранить."""

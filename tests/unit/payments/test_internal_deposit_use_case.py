@@ -14,6 +14,7 @@ from payflow.modules.financial_core.application.events import (
 from payflow.modules.financial_core.application.payments.exceptions import (
     DuplicateInternalDepositOperationError,
     InsufficientSourceFundsError,
+    InternalDepositWalletUnavailableError,
     InvalidInternalDepositAmountError,
     SourceWalletEqualsTargetWalletError,
     WalletCurrencyMismatchError,
@@ -30,6 +31,7 @@ from payflow.modules.financial_core.domain.ledger import (
 from payflow.modules.financial_core.domain.wallets import (
     BalanceProjection,
     Wallet,
+    WalletNotFoundError,
     WalletStatus,
 )
 
@@ -391,12 +393,14 @@ def make_wallet(
     *,
     wallet_id: UUID | None = None,
     currency: str = "USD",
+    status: WalletStatus = WalletStatus.ACTIVE,
 ) -> Wallet:
     """Создает кошелек для unit-теста.
 
     Args:
         wallet_id: Явный идентификатор кошелька.
         currency: Код валюты кошелька.
+        status: Статус кошелька.
 
     Returns:
         Доменный кошелек.
@@ -405,7 +409,7 @@ def make_wallet(
         id=wallet_id,
         user_id=uuid4(),
         currency=currency,
-        status=WalletStatus.ACTIVE,
+        status=status,
     )
 
 
@@ -572,6 +576,104 @@ async def test_rejects_currency_mismatch() -> None:
     )
 
     with pytest.raises(WalletCurrencyMismatchError):
+        await use_case.execute(
+            operation_id=uuid4(),
+            source_wallet_id=source_wallet.id,
+            target_wallet_id=target_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert ledger_transactions.created_transactions == []
+    assert transaction_manager.rolled_back
+
+
+async def test_rejects_missing_source_wallet() -> None:
+    """Проверяет отказ, если source wallet не найден."""
+    (
+        use_case,
+        ledger_transactions,
+        _,
+        transaction_manager,
+        _,
+        target_wallet,
+    ) = make_use_case()
+
+    with pytest.raises(WalletNotFoundError):
+        await use_case.execute(
+            operation_id=uuid4(),
+            source_wallet_id=uuid4(),
+            target_wallet_id=target_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert ledger_transactions.created_transactions == []
+    assert transaction_manager.rolled_back
+
+
+async def test_rejects_missing_target_wallet() -> None:
+    """Проверяет отказ, если target wallet не найден."""
+    (
+        use_case,
+        ledger_transactions,
+        _,
+        transaction_manager,
+        source_wallet,
+        _,
+    ) = make_use_case()
+
+    with pytest.raises(WalletNotFoundError):
+        await use_case.execute(
+            operation_id=uuid4(),
+            source_wallet_id=source_wallet.id,
+            target_wallet_id=uuid4(),
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert ledger_transactions.created_transactions == []
+    assert transaction_manager.rolled_back
+
+
+@pytest.mark.parametrize("status", [WalletStatus.BLOCKED, WalletStatus.CLOSED])
+async def test_rejects_unavailable_source_wallet(status: WalletStatus) -> None:
+    """Проверяет отказ для BLOCKED/CLOSED source wallet.
+
+    Args:
+        status: Недоступный статус кошелька.
+    """
+    source_wallet = make_wallet(status=status)
+    use_case, ledger_transactions, _, transaction_manager, _, _ = make_use_case(
+        source_wallet=source_wallet,
+    )
+
+    with pytest.raises(InternalDepositWalletUnavailableError):
+        await use_case.execute(
+            operation_id=uuid4(),
+            source_wallet_id=source_wallet.id,
+            target_wallet_id=uuid4(),
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert ledger_transactions.created_transactions == []
+    assert transaction_manager.rolled_back
+
+
+@pytest.mark.parametrize("status", [WalletStatus.BLOCKED, WalletStatus.CLOSED])
+async def test_rejects_unavailable_target_wallet(status: WalletStatus) -> None:
+    """Проверяет отказ для BLOCKED/CLOSED target wallet.
+
+    Args:
+        status: Недоступный статус кошелька.
+    """
+    target_wallet = make_wallet(status=status)
+    use_case, ledger_transactions, _, transaction_manager, source_wallet, _ = (
+        make_use_case(target_wallet=target_wallet)
+    )
+
+    with pytest.raises(InternalDepositWalletUnavailableError):
         await use_case.execute(
             operation_id=uuid4(),
             source_wallet_id=source_wallet.id,

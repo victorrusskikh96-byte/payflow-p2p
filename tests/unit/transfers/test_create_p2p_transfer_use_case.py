@@ -14,6 +14,8 @@ from payflow.modules.financial_core.application.events import (
 from payflow.modules.financial_core.application.transfers.exceptions import (
     InactiveTransferWalletError,
     InsufficientTransferFundsError,
+    RecipientWalletNotFoundError,
+    SenderWalletNotFoundError,
     TransferWalletCurrencyMismatchError,
     TransferWalletOwnershipError,
 )
@@ -28,6 +30,8 @@ from payflow.modules.financial_core.domain.ledger import (
 )
 from payflow.modules.financial_core.domain.transfers import (
     DuplicateTransferOperationError,
+    InvalidTransferAmountError,
+    InvalidTransferCurrencyError,
     SameTransferWalletsError,
     Transfer,
     TransferNotFoundError,
@@ -809,6 +813,60 @@ async def test_sender_wallet_belongs_to_another_user_is_rejected() -> None:
     assert transaction_manager.rolled_back
 
 
+async def test_sender_wallet_not_found_is_rejected() -> None:
+    """Проверяет отказ, если sender wallet не найден."""
+    (
+        use_case,
+        transfers,
+        ledger_transactions,
+        _,
+        transaction_manager,
+        _,
+        recipient_wallet,
+    ) = make_use_case()
+
+    with pytest.raises(SenderWalletNotFoundError):
+        await use_case.execute(
+            operation_id=uuid4(),
+            sender_user_id=uuid4(),
+            sender_wallet_id=uuid4(),
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert transfers.transfers_by_id == {}
+    assert ledger_transactions.created_transactions == []
+    assert transaction_manager.rolled_back
+
+
+async def test_recipient_wallet_not_found_is_rejected() -> None:
+    """Проверяет отказ, если recipient wallet не найден."""
+    (
+        use_case,
+        transfers,
+        ledger_transactions,
+        _,
+        transaction_manager,
+        sender_wallet,
+        _,
+    ) = make_use_case()
+
+    with pytest.raises(RecipientWalletNotFoundError):
+        await use_case.execute(
+            operation_id=uuid4(),
+            sender_user_id=sender_wallet.user_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=uuid4(),
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert transfers.transfers_by_id == {}
+    assert ledger_transactions.created_transactions == []
+    assert transaction_manager.rolled_back
+
+
 async def test_currency_mismatch_is_rejected() -> None:
     """Проверяет отказ при несовпадении валют кошельков."""
     sender_wallet = make_wallet(currency="USD")
@@ -852,9 +910,14 @@ async def test_same_wallet_transfer_is_rejected() -> None:
     assert not transaction_manager.entered
 
 
-async def test_inactive_wallet_is_rejected() -> None:
-    """Проверяет отказ, если один из кошельков не ACTIVE."""
-    sender_wallet = make_wallet(status=WalletStatus.BLOCKED)
+@pytest.mark.parametrize("status", [WalletStatus.BLOCKED, WalletStatus.CLOSED])
+async def test_inactive_sender_wallet_is_rejected(status: WalletStatus) -> None:
+    """Проверяет отказ, если sender wallet не ACTIVE.
+
+    Args:
+        status: Недоступный статус кошелька.
+    """
+    sender_wallet = make_wallet(status=status)
     recipient_wallet = make_wallet()
     use_case, _, ledger_transactions, _, transaction_manager, _, _ = make_use_case(
         sender_wallet=sender_wallet,
@@ -873,3 +936,97 @@ async def test_inactive_wallet_is_rejected() -> None:
 
     assert ledger_transactions.created_transactions == []
     assert transaction_manager.rolled_back
+
+
+@pytest.mark.parametrize("status", [WalletStatus.BLOCKED, WalletStatus.CLOSED])
+async def test_inactive_recipient_wallet_is_rejected(status: WalletStatus) -> None:
+    """Проверяет отказ, если recipient wallet не ACTIVE.
+
+    Args:
+        status: Недоступный статус кошелька.
+    """
+    sender_wallet = make_wallet()
+    recipient_wallet = make_wallet(status=status)
+    use_case, _, ledger_transactions, _, transaction_manager, _, _ = make_use_case(
+        sender_wallet=sender_wallet,
+        recipient_wallet=recipient_wallet,
+    )
+
+    with pytest.raises(InactiveTransferWalletError):
+        await use_case.execute(
+            operation_id=uuid4(),
+            sender_user_id=sender_wallet.user_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    assert ledger_transactions.created_transactions == []
+    assert transaction_manager.rolled_back
+
+
+@pytest.mark.parametrize("amount_minor", [0, -1])
+async def test_non_positive_transfer_amount_is_rejected(
+    amount_minor: int,
+) -> None:
+    """Проверяет отказ для amount_minor <= 0.
+
+    Args:
+        amount_minor: Некорректная сумма перевода.
+    """
+    (
+        use_case,
+        transfers,
+        ledger_transactions,
+        _,
+        transaction_manager,
+        sender_wallet,
+        recipient_wallet,
+    ) = make_use_case()
+
+    with pytest.raises(InvalidTransferAmountError):
+        await use_case.execute(
+            operation_id=uuid4(),
+            sender_user_id=sender_wallet.user_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=amount_minor,
+            currency="USD",
+        )
+
+    assert transfers.transfers_by_id == {}
+    assert ledger_transactions.created_transactions == []
+    assert not transaction_manager.entered
+
+
+@pytest.mark.parametrize("currency", ["", "   "])
+async def test_empty_transfer_currency_is_rejected(currency: str) -> None:
+    """Проверяет отказ для пустой валюты перевода.
+
+    Args:
+        currency: Некорректная валюта перевода.
+    """
+    (
+        use_case,
+        transfers,
+        ledger_transactions,
+        _,
+        transaction_manager,
+        sender_wallet,
+        recipient_wallet,
+    ) = make_use_case()
+
+    with pytest.raises(InvalidTransferCurrencyError):
+        await use_case.execute(
+            operation_id=uuid4(),
+            sender_user_id=sender_wallet.user_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=100,
+            currency=currency,
+        )
+
+    assert transfers.transfers_by_id == {}
+    assert ledger_transactions.created_transactions == []
+    assert not transaction_manager.entered

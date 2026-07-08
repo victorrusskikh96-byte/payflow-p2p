@@ -6,8 +6,16 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from payflow.modules.financial_core.application.events import (
+    OutboxEventData,
+    OutboxEventRecord,
+)
 from payflow.modules.financial_core.application.transfers.exceptions import (
     InsufficientTransferFundsError,
+    TransferBalanceUpdateFailedError,
+    TransferCreationFailedError,
+    TransferLedgerCreationFailedError,
+    TransferOutboxEventCreationFailedError,
     TransferWalletCurrencyMismatchError,
     TransferWalletOwnershipError,
 )
@@ -23,6 +31,7 @@ from payflow.modules.financial_core.domain.ledger import (
 from payflow.modules.financial_core.domain.transfers import (
     DuplicateTransferOperationError,
     SameTransferWalletsError,
+    Transfer,
     TransferStatus,
 )
 from payflow.modules.financial_core.domain.wallets import (
@@ -85,6 +94,60 @@ class FailingRecipientSaveWalletBalanceRepository(SQLAlchemyWalletBalanceReposit
         if balance.wallet_id == self._failed_wallet_id:
             raise RuntimeError("Forced recipient balance save failure.")
         return await super().save(balance)
+
+
+class FailingTransferRepository(SQLAlchemyTransferRepository):
+    """Имитирует сбой создания P2P-перевода."""
+
+    async def create(self, transfer: Transfer) -> Transfer:
+        """Выбрасывает RuntimeError вместо сохранения перевода.
+
+        Args:
+            transfer: Доменная сущность перевода.
+
+        Returns:
+            Сохраненный перевод.
+
+        Raises:
+            RuntimeError: Всегда, чтобы проверить rollback операции.
+        """
+        raise RuntimeError("Forced P2P transfer creation failure.")
+
+
+class FailingLedgerTransactionRepository(SQLAlchemyLedgerTransactionRepository):
+    """Имитирует сбой создания ledger transaction."""
+
+    async def create(self, transaction: LedgerTransaction) -> LedgerTransaction:
+        """Выбрасывает RuntimeError вместо сохранения ledger transaction.
+
+        Args:
+            transaction: Доменная ledger transaction.
+
+        Returns:
+            Сохраненная ledger transaction.
+
+        Raises:
+            RuntimeError: Всегда, чтобы проверить rollback операции.
+        """
+        raise RuntimeError("Forced P2P transfer ledger failure.")
+
+
+class FailingOutboxEventRepository(SQLAlchemyOutboxEventRepository):
+    """Имитирует сбой сохранения outbox event."""
+
+    async def create(self, event: OutboxEventData) -> OutboxEventRecord:
+        """Выбрасывает RuntimeError вместо сохранения outbox event.
+
+        Args:
+            event: Данные события для записи.
+
+        Returns:
+            Сохраненная строка outbox_events.
+
+        Raises:
+            RuntimeError: Всегда, чтобы проверить rollback операции.
+        """
+        raise RuntimeError("Forced P2P transfer outbox failure.")
 
 
 class StaleDuplicateCheckTransferRepository(SQLAlchemyTransferRepository):
@@ -210,6 +273,69 @@ def make_use_case_with_failing_balance_save(
         ),
         ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
         outbox_events=SQLAlchemyOutboxEventRepository(async_session),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_use_case_with_failing_transfer_create(
+    async_session: AsyncSession,
+) -> CreateP2PTransferUseCase:
+    """Создает use case со сбоем создания P2P-перевода.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+
+    Returns:
+        Use case P2P-перевода.
+    """
+    return CreateP2PTransferUseCase(
+        transfers=FailingTransferRepository(async_session),
+        wallets=SQLAlchemyWalletRepository(async_session),
+        balances=SQLAlchemyWalletBalanceRepository(async_session),
+        ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_use_case_with_failing_ledger_create(
+    async_session: AsyncSession,
+) -> CreateP2PTransferUseCase:
+    """Создает use case со сбоем создания ledger transaction.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+
+    Returns:
+        Use case P2P-перевода.
+    """
+    return CreateP2PTransferUseCase(
+        transfers=SQLAlchemyTransferRepository(async_session),
+        wallets=SQLAlchemyWalletRepository(async_session),
+        balances=SQLAlchemyWalletBalanceRepository(async_session),
+        ledger_transactions=FailingLedgerTransactionRepository(async_session),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_use_case_with_failing_outbox_create(
+    async_session: AsyncSession,
+) -> CreateP2PTransferUseCase:
+    """Создает use case со сбоем создания outbox event.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+
+    Returns:
+        Use case P2P-перевода.
+    """
+    return CreateP2PTransferUseCase(
+        transfers=SQLAlchemyTransferRepository(async_session),
+        wallets=SQLAlchemyWalletRepository(async_session),
+        balances=SQLAlchemyWalletBalanceRepository(async_session),
+        ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
+        outbox_events=FailingOutboxEventRepository(async_session),
         transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
 
@@ -719,6 +845,86 @@ async def test_insufficient_funds_does_not_complete_transfer_or_change_balances(
     assert await get_available_balance(async_session, recipient_wallet.id) == 20
 
 
+async def test_failed_transfer_creation_does_not_create_ledger_or_outbox(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed error и rollback при сбое создания transfer.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    sender_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=500,
+    )
+    recipient_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=10,
+    )
+    await async_session.commit()
+
+    with pytest.raises(TransferCreationFailedError):
+        await make_use_case_with_failing_transfer_create(async_session).execute(
+            operation_id=uuid4(),
+            sender_user_id=sender_wallet.user_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    async_session.expire_all()
+    assert await count_transfers(async_session) == 0
+    assert await count_ledger_transactions(async_session) == 0
+    assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 0
+    )
+    assert await get_available_balance(async_session, sender_wallet.id) == 500
+    assert await get_available_balance(async_session, recipient_wallet.id) == 10
+
+
+async def test_failed_ledger_creation_rolls_back_transfer(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed error и rollback при сбое создания ledger transaction.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    sender_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=500,
+    )
+    recipient_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=10,
+    )
+    await async_session.commit()
+
+    with pytest.raises(TransferLedgerCreationFailedError):
+        await make_use_case_with_failing_ledger_create(async_session).execute(
+            operation_id=uuid4(),
+            sender_user_id=sender_wallet.user_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    async_session.expire_all()
+    assert await count_transfers(async_session) == 0
+    assert await count_ledger_transactions(async_session) == 0
+    assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 0
+    )
+    assert await get_available_balance(async_session, sender_wallet.id) == 500
+    assert await get_available_balance(async_session, recipient_wallet.id) == 10
+
+
 async def test_transfer_between_wallets_with_different_currencies_is_rejected(
     async_session: AsyncSession,
 ) -> None:
@@ -826,7 +1032,7 @@ async def test_sender_cannot_transfer_from_another_users_wallet(
 async def test_partial_updates_are_rolled_back_on_error(
     async_session: AsyncSession,
 ) -> None:
-    """Проверяет rollback transfer, ledger и balances при частичном сбое.
+    """Проверяет managed error и rollback при частичном сбое.
 
     Args:
         async_session: Асинхронная SQLAlchemy-сессия.
@@ -841,11 +1047,51 @@ async def test_partial_updates_are_rolled_back_on_error(
     )
     await async_session.commit()
 
-    with pytest.raises(RuntimeError, match="Forced recipient balance save failure"):
+    with pytest.raises(TransferBalanceUpdateFailedError):
         await make_use_case_with_failing_balance_save(
             async_session,
             failed_wallet_id=recipient_wallet.id,
         ).execute(
+            operation_id=uuid4(),
+            sender_user_id=sender_wallet.user_id,
+            sender_wallet_id=sender_wallet.id,
+            recipient_wallet_id=recipient_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    async_session.expire_all()
+    assert await count_transfers(async_session) == 0
+    assert await count_ledger_transactions(async_session) == 0
+    assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(async_session, event_type="p2p_transfer.completed")
+        == 0
+    )
+    assert await get_available_balance(async_session, sender_wallet.id) == 500
+    assert await get_available_balance(async_session, recipient_wallet.id) == 10
+
+
+async def test_failed_outbox_creation_rolls_back_transfer(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed error и rollback при сбое создания outbox event.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    sender_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=500,
+    )
+    recipient_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=10,
+    )
+    await async_session.commit()
+
+    with pytest.raises(TransferOutboxEventCreationFailedError):
+        await make_use_case_with_failing_outbox_create(async_session).execute(
             operation_id=uuid4(),
             sender_user_id=sender_wallet.user_id,
             sender_wallet_id=sender_wallet.id,

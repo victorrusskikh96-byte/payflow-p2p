@@ -6,9 +6,16 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from payflow.modules.financial_core.application.events import (
+    OutboxEventData,
+    OutboxEventRecord,
+)
 from payflow.modules.financial_core.application.payments.exceptions import (
     DuplicateInternalDepositOperationError,
     InsufficientSourceFundsError,
+    InternalDepositBalanceUpdateFailedError,
+    InternalDepositLedgerCreationFailedError,
+    InternalDepositOutboxEventCreationFailedError,
 )
 from payflow.modules.financial_core.application.payments.use_cases import (
     InternalDepositUseCase,
@@ -16,6 +23,7 @@ from payflow.modules.financial_core.application.payments.use_cases import (
 from payflow.modules.financial_core.domain.ledger import (
     LedgerEntryDirection,
     LedgerOperationType,
+    LedgerTransaction,
 )
 from payflow.modules.financial_core.domain.wallets import BalanceProjection, Wallet
 from payflow.modules.financial_core.infrastructure.models import (
@@ -69,6 +77,42 @@ class FailingTargetSaveWalletBalanceRepository(SQLAlchemyWalletBalanceRepository
         if balance.wallet_id == self._failed_wallet_id:
             raise RuntimeError("Forced target balance save failure.")
         return await super().save(balance)
+
+
+class FailingLedgerTransactionRepository(SQLAlchemyLedgerTransactionRepository):
+    """Имитирует сбой создания ledger transaction."""
+
+    async def create(self, transaction: LedgerTransaction) -> LedgerTransaction:
+        """Выбрасывает RuntimeError вместо сохранения ledger transaction.
+
+        Args:
+            transaction: Доменная ledger transaction.
+
+        Returns:
+            Сохраненная ledger transaction.
+
+        Raises:
+            RuntimeError: Всегда, чтобы проверить rollback операции.
+        """
+        raise RuntimeError("Forced internal deposit ledger failure.")
+
+
+class FailingOutboxEventRepository(SQLAlchemyOutboxEventRepository):
+    """Имитирует сбой сохранения outbox event."""
+
+    async def create(self, event: OutboxEventData) -> OutboxEventRecord:
+        """Выбрасывает RuntimeError вместо сохранения outbox event.
+
+        Args:
+            event: Данные события для записи.
+
+        Returns:
+            Сохраненная строка outbox_events.
+
+        Raises:
+            RuntimeError: Всегда, чтобы проверить rollback операции.
+        """
+        raise RuntimeError("Forced internal deposit outbox failure.")
 
 
 class StaleDuplicateCheckLedgerTransactionRepository(
@@ -171,6 +215,46 @@ def make_use_case_with_failing_balance_save(
         ),
         ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
         outbox_events=SQLAlchemyOutboxEventRepository(async_session),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_use_case_with_failing_ledger_create(
+    async_session: AsyncSession,
+) -> InternalDepositUseCase:
+    """Создает use case со сбоем создания ledger transaction.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+
+    Returns:
+        Use case internal deposit.
+    """
+    return InternalDepositUseCase(
+        wallets=SQLAlchemyWalletRepository(async_session),
+        balances=SQLAlchemyWalletBalanceRepository(async_session),
+        ledger_transactions=FailingLedgerTransactionRepository(async_session),
+        outbox_events=SQLAlchemyOutboxEventRepository(async_session),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_use_case_with_failing_outbox_create(
+    async_session: AsyncSession,
+) -> InternalDepositUseCase:
+    """Создает use case со сбоем создания outbox event.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+
+    Returns:
+        Use case internal deposit.
+    """
+    return InternalDepositUseCase(
+        wallets=SQLAlchemyWalletRepository(async_session),
+        balances=SQLAlchemyWalletBalanceRepository(async_session),
+        ledger_transactions=SQLAlchemyLedgerTransactionRepository(async_session),
+        outbox_events=FailingOutboxEventRepository(async_session),
         transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
 
@@ -523,10 +607,10 @@ async def test_insufficient_source_funds_does_not_create_ledger_transaction(
     assert await get_available_balance(async_session, target_wallet.id) == 20
 
 
-async def test_failed_operation_rolls_back_partial_balance_updates(
+async def test_failed_ledger_creation_rolls_back_internal_deposit(
     async_session: AsyncSession,
 ) -> None:
-    """Проверяет rollback ledger и balances при сбое после source update.
+    """Проверяет managed error и rollback при сбое создания ledger transaction.
 
     Args:
         async_session: Асинхронная SQLAlchemy-сессия.
@@ -541,11 +625,93 @@ async def test_failed_operation_rolls_back_partial_balance_updates(
     )
     await async_session.commit()
 
-    with pytest.raises(RuntimeError, match="Forced target balance save failure"):
+    with pytest.raises(InternalDepositLedgerCreationFailedError):
+        await make_use_case_with_failing_ledger_create(async_session).execute(
+            operation_id=uuid4(),
+            source_wallet_id=source_wallet.id,
+            target_wallet_id=target_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    async_session.expire_all()
+    assert await count_ledger_transactions(async_session) == 0
+    assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(
+            async_session,
+            event_type="internal_deposit.completed",
+        )
+        == 0
+    )
+    assert await get_available_balance(async_session, source_wallet.id) == 500
+    assert await get_available_balance(async_session, target_wallet.id) == 10
+
+
+async def test_failed_operation_rolls_back_partial_balance_updates(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed error и rollback при сбое после source update.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    source_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=500,
+    )
+    target_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=10,
+    )
+    await async_session.commit()
+
+    with pytest.raises(InternalDepositBalanceUpdateFailedError):
         await make_use_case_with_failing_balance_save(
             async_session,
             failed_wallet_id=target_wallet.id,
         ).execute(
+            operation_id=uuid4(),
+            source_wallet_id=source_wallet.id,
+            target_wallet_id=target_wallet.id,
+            amount_minor=100,
+            currency="USD",
+        )
+
+    async_session.expire_all()
+    assert await count_ledger_transactions(async_session) == 0
+    assert await count_ledger_entries(async_session) == 0
+    assert (
+        await count_outbox_events(
+            async_session,
+            event_type="internal_deposit.completed",
+        )
+        == 0
+    )
+    assert await get_available_balance(async_session, source_wallet.id) == 500
+    assert await get_available_balance(async_session, target_wallet.id) == 10
+
+
+async def test_failed_outbox_creation_rolls_back_internal_deposit(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed error и rollback при сбое создания outbox event.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    source_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=500,
+    )
+    target_wallet = await create_wallet_with_balance(
+        async_session,
+        available_amount_minor=10,
+    )
+    await async_session.commit()
+
+    with pytest.raises(InternalDepositOutboxEventCreationFailedError):
+        await make_use_case_with_failing_outbox_create(async_session).execute(
             operation_id=uuid4(),
             source_wallet_id=source_wallet.id,
             target_wallet_id=target_wallet.id,

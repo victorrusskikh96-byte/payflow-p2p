@@ -22,6 +22,9 @@ from payflow.modules.financial_core.application.wallets import (
     WalletRepository,
     WalletWithBalance,
 )
+from payflow.modules.financial_core.application.wallets.exceptions import (
+    WalletsApplicationError,
+)
 from payflow.modules.financial_core.domain.wallets import (
     InvalidWalletCurrencyError,
     WalletAlreadyExistsError,
@@ -45,7 +48,7 @@ from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepo
 
 CurrencyField = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=16),
+    StringConstraints(strip_whitespace=True, max_length=16),
 ]
 
 router = APIRouter()
@@ -307,6 +310,11 @@ async def create_wallet(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid wallet currency.",
+        ) from exc
+    except WalletsApplicationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Wallet operation failed.",
         ) from exc
 
     return _wallet_with_balance_to_response(wallet_with_balance)

@@ -26,6 +26,7 @@ from payflow.modules.financial_core.application.transfers.exceptions import (
     InsufficientTransferFundsError,
     RecipientWalletNotFoundError,
     SenderWalletNotFoundError,
+    TransfersApplicationError,
     TransferWalletCurrencyMismatchError,
     TransferWalletOwnershipError,
 )
@@ -63,7 +64,7 @@ from payflow.modules.users.domain import User
 
 CurrencyField = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=16),
+    StringConstraints(strip_whitespace=True, max_length=16),
 ]
 
 router = APIRouter()
@@ -352,6 +353,11 @@ async def create_transfer(
         WalletBalanceNotFoundError,
     ) as exc:
         _raise_transfer_not_found(exc)
+    except TransfersApplicationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Transfer operation failed.",
+        ) from exc
 
     return _transfer_to_response(result.transfer)
 

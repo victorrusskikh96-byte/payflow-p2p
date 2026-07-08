@@ -12,6 +12,7 @@ from payflow.modules.financial_core.domain.wallets import (
     InsufficientFundsError,
     InvalidBalanceUpdateError,
     Wallet,
+    WalletAlreadyExistsError,
     WalletStatus,
 )
 from payflow.modules.financial_core.infrastructure.models import (
@@ -137,7 +138,7 @@ async def test_wallet_user_id_and_currency_unique_constraint(
     repository = SQLAlchemyWalletRepository(async_session)
     await repository.create(Wallet(user_id=user.id, currency="USD"))
 
-    with pytest.raises(IntegrityError):
+    with pytest.raises(WalletAlreadyExistsError):
         await repository.create(Wallet(user_id=user.id, currency=" usd "))
 
 

@@ -16,6 +16,9 @@ from payflow.modules.financial_core.application.ledger.repositories import (
 from payflow.modules.financial_core.application.payments.exceptions import (
     DuplicateInternalDepositOperationError,
     InsufficientSourceFundsError,
+    InternalDepositBalanceUpdateFailedError,
+    InternalDepositLedgerCreationFailedError,
+    InternalDepositOutboxEventCreationFailedError,
     InternalDepositWalletUnavailableError,
     InvalidInternalDepositAmountError,
     SourceWalletEqualsTargetWalletError,
@@ -112,6 +115,12 @@ class InternalDepositUseCase:
             WalletCurrencyMismatchError: Если валюты кошельков или команды не совпали.
             InsufficientSourceFundsError: Если funding wallet не имеет средств.
             WalletBalanceNotFoundError: Если balance projection не найдена.
+            InternalDepositLedgerCreationFailedError: Если ledger transaction не
+                удалось сохранить.
+            InternalDepositBalanceUpdateFailedError: Если balance projection не
+                удалось обновить.
+            InternalDepositOutboxEventCreationFailedError: Если outbox event не
+                удалось сохранить.
         """
         if amount_minor <= 0:
             raise InvalidInternalDepositAmountError(
@@ -167,21 +176,36 @@ class InternalDepositUseCase:
                 raise DuplicateInternalDepositOperationError(
                     "Internal deposit operation already exists."
                 ) from exc
+            except Exception as exc:
+                raise InternalDepositLedgerCreationFailedError(
+                    "Internal deposit ledger transaction creation failed."
+                ) from exc
 
             source_balance.decrease_available_amount(amount_minor)
             target_balance.increase_available_amount(amount_minor)
-            source_balance = await self._balances.save(source_balance)
-            target_balance = await self._balances.save(target_balance)
-            await self._outbox_events.create(
-                internal_deposit_completed_event(
-                    operation_id=operation_id,
-                    source_wallet_id=source_wallet_id,
-                    target_wallet_id=target_wallet_id,
-                    ledger_transaction_id=transaction.id,
-                    amount_minor=amount_minor,
-                    currency=normalized_currency,
+            try:
+                source_balance = await self._balances.save(source_balance)
+                target_balance = await self._balances.save(target_balance)
+            except Exception as exc:
+                raise InternalDepositBalanceUpdateFailedError(
+                    "Internal deposit balance update failed."
+                ) from exc
+
+            try:
+                await self._outbox_events.create(
+                    internal_deposit_completed_event(
+                        operation_id=operation_id,
+                        source_wallet_id=source_wallet_id,
+                        target_wallet_id=target_wallet_id,
+                        ledger_transaction_id=transaction.id,
+                        amount_minor=amount_minor,
+                        currency=normalized_currency,
+                    )
                 )
-            )
+            except Exception as exc:
+                raise InternalDepositOutboxEventCreationFailedError(
+                    "Internal deposit outbox event creation failed."
+                ) from exc
 
             return InternalDepositResult(
                 transaction=transaction,

@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from sqlalchemy import exists, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payflow.modules.financial_core.application.wallets.repositories import (
@@ -13,6 +14,7 @@ from payflow.modules.financial_core.domain.wallets import (
     BalanceProjection,
     InvalidBalanceUpdateError,
     Wallet,
+    WalletAlreadyExistsError,
     WalletBalanceNotFoundError,
     WalletNotFoundError,
     normalize_currency,
@@ -27,6 +29,20 @@ from payflow.modules.financial_core.infrastructure.models import (
     WalletBalanceModel,
     WalletModel,
 )
+
+_WALLET_USER_ID_CURRENCY_UNIQUE_CONSTRAINT = "uq_wallets_user_id_currency"
+
+
+def _violates_constraint(error: IntegrityError, constraint_name: str) -> bool:
+    original_error = error.orig
+    diagnostic = getattr(original_error, "diag", None)
+    diagnostic_constraint = getattr(diagnostic, "constraint_name", None)
+    if (
+        isinstance(diagnostic_constraint, str)
+        and diagnostic_constraint == constraint_name
+    ):
+        return True
+    return constraint_name in str(original_error) or constraint_name in str(error)
 
 
 class SQLAlchemyWalletRepository(WalletRepository):
@@ -48,10 +64,25 @@ class SQLAlchemyWalletRepository(WalletRepository):
 
         Returns:
             Сохраненный кошелек.
+
+        Raises:
+            WalletAlreadyExistsError: Если кошелек в такой валюте уже существует.
+            sqlalchemy.exc.IntegrityError: Если база данных отклоняет другие
+                ограничения.
         """
         wallet_model = wallet_entity_to_model(wallet)
         self._session.add(wallet_model)
-        await self._session.flush()
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            if _violates_constraint(
+                exc,
+                _WALLET_USER_ID_CURRENCY_UNIQUE_CONSTRAINT,
+            ):
+                raise WalletAlreadyExistsError(
+                    "Wallet with this currency already exists."
+                ) from exc
+            raise
         return wallet_model_to_entity(wallet_model)
 
     async def get_by_id(self, wallet_id: UUID) -> Wallet | None:

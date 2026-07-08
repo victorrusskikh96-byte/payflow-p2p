@@ -7,3 +7,7 @@ class LedgerApplicationError(Exception):
 
 class LedgerTransactionAlreadyExistsError(LedgerApplicationError):
     """Сообщает, что ledger transaction для operation_id уже существует."""
+
+
+class LedgerTransactionCreationFailedError(LedgerApplicationError):
+    """Сообщает, что ledger transaction не удалось сохранить."""

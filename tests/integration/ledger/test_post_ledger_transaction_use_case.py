@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from payflow.modules.financial_core.application.ledger.exceptions import (
     LedgerTransactionAlreadyExistsError,
+    LedgerTransactionCreationFailedError,
 )
 from payflow.modules.financial_core.application.ledger.use_cases import (
     PostLedgerEntryCommand,
@@ -17,6 +18,7 @@ from payflow.modules.financial_core.application.ledger.use_cases import (
 from payflow.modules.financial_core.domain.ledger import (
     LedgerEntryDirection,
     LedgerOperationType,
+    LedgerTransaction,
     UnbalancedLedgerTransactionError,
 )
 from payflow.modules.financial_core.domain.wallets import Wallet
@@ -35,6 +37,24 @@ from payflow.modules.financial_core.infrastructure.transactions import (
 )
 from payflow.modules.users.domain import User
 from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepository
+
+
+class FailingLedgerTransactionRepository(SQLAlchemyLedgerTransactionRepository):
+    """Имитирует сбой сохранения ledger transaction."""
+
+    async def create(self, transaction: LedgerTransaction) -> LedgerTransaction:
+        """Выбрасывает RuntimeError вместо сохранения ledger transaction.
+
+        Args:
+            transaction: Доменная ledger transaction.
+
+        Returns:
+            Сохраненная ledger transaction.
+
+        Raises:
+            RuntimeError: Всегда, чтобы проверить managed exception.
+        """
+        raise RuntimeError("Forced ledger transaction creation failure.")
 
 
 async def create_user(async_session: AsyncSession) -> User:
@@ -116,6 +136,23 @@ def make_use_case(async_session: AsyncSession) -> PostLedgerTransactionUseCase:
     """
     return PostLedgerTransactionUseCase(
         transactions=SQLAlchemyLedgerTransactionRepository(async_session),
+        transaction_manager=SQLAlchemyTransactionManager(async_session),
+    )
+
+
+def make_use_case_with_failing_create(
+    async_session: AsyncSession,
+) -> PostLedgerTransactionUseCase:
+    """Создает ledger posting use case со сбоем сохранения.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+
+    Returns:
+        Use case posting ledger transaction.
+    """
+    return PostLedgerTransactionUseCase(
+        transactions=FailingLedgerTransactionRepository(async_session),
         transaction_manager=SQLAlchemyTransactionManager(async_session),
     )
 
@@ -245,6 +282,31 @@ async def test_unbalanced_transaction_is_not_persisted(
             )
         )
 
+    assert await count_ledger_transactions(async_session) == 0
+    assert await count_ledger_entries(async_session) == 0
+
+
+async def test_failed_transaction_creation_is_wrapped_and_not_persisted(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет managed error и rollback при сбое сохранения ledger transaction.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    debit_wallet = await create_wallet(async_session)
+    credit_wallet = await create_wallet(async_session)
+    await async_session.commit()
+
+    with pytest.raises(LedgerTransactionCreationFailedError):
+        await make_use_case_with_failing_create(async_session).execute(
+            make_post_command(
+                debit_wallet_id=debit_wallet.id,
+                credit_wallet_id=credit_wallet.id,
+            )
+        )
+
+    async_session.expire_all()
     assert await count_ledger_transactions(async_session) == 0
     assert await count_ledger_entries(async_session) == 0
 

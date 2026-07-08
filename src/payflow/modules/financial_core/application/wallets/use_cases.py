@@ -7,6 +7,11 @@ from payflow.modules.financial_core.application.events import (
     OutboxEventWriter,
     wallet_created_event,
 )
+from payflow.modules.financial_core.application.wallets.exceptions import (
+    WalletBalanceProjectionCreationFailedError,
+    WalletCreationFailedError,
+    WalletOutboxEventCreationFailedError,
+)
 from payflow.modules.financial_core.application.wallets.repositories import (
     WalletBalanceRepository,
     WalletRepository,
@@ -73,6 +78,11 @@ class CreateWalletUseCase:
         Raises:
             WalletOwnerUnavailableError: Если пользователь не найден или заблокирован.
             WalletAlreadyExistsError: Если кошелек в такой валюте уже существует.
+            WalletCreationFailedError: Если кошелек не удалось сохранить.
+            WalletBalanceProjectionCreationFailedError: Если начальную проекцию
+                баланса не удалось сохранить.
+            WalletOutboxEventCreationFailedError: Если outbox event не удалось
+                сохранить.
             InvalidWalletCurrencyError: Если валюта пустая после нормализации.
         """
         async with self._transaction_manager:
@@ -85,19 +95,35 @@ class CreateWalletUseCase:
                     "Wallet with this currency already exists."
                 )
 
-            wallet = await self._wallets.create(
-                Wallet(user_id=user_id, currency=currency)
-            )
-            balance = await self._balances.create_initial(
-                BalanceProjection(wallet_id=wallet.id, currency=wallet.currency)
-            )
-            await self._outbox_events.create(
-                wallet_created_event(
-                    wallet_id=wallet.id,
-                    user_id=wallet.user_id,
-                    currency=wallet.currency,
+            wallet_to_create = Wallet(user_id=user_id, currency=currency)
+            try:
+                wallet = await self._wallets.create(wallet_to_create)
+            except WalletAlreadyExistsError:
+                raise
+            except Exception as exc:
+                raise WalletCreationFailedError("Wallet creation failed.") from exc
+
+            try:
+                balance = await self._balances.create_initial(
+                    BalanceProjection(wallet_id=wallet.id, currency=wallet.currency)
                 )
-            )
+            except Exception as exc:
+                raise WalletBalanceProjectionCreationFailedError(
+                    "Wallet balance projection creation failed."
+                ) from exc
+
+            try:
+                await self._outbox_events.create(
+                    wallet_created_event(
+                        wallet_id=wallet.id,
+                        user_id=wallet.user_id,
+                        currency=wallet.currency,
+                    )
+                )
+            except Exception as exc:
+                raise WalletOutboxEventCreationFailedError(
+                    "Wallet outbox event creation failed."
+                ) from exc
 
             return WalletWithBalance(wallet=wallet, balance=balance)
 

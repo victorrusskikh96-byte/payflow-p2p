@@ -4,9 +4,14 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from payflow.modules.financial_core.infrastructure.models import WalletBalanceModel
+from payflow.modules.financial_core.domain.wallets import WalletStatus
+from payflow.modules.financial_core.infrastructure.models import (
+    WalletBalanceModel,
+    WalletModel,
+)
 from tests.e2e.test_wallet_endpoints import (
     auth_headers,
     count_outbox_events,
@@ -32,6 +37,28 @@ async def set_wallet_available_balance(
         balance = await session.get(WalletBalanceModel, UUID(wallet_id))
         assert balance is not None
         balance.available_amount_minor = available_amount_minor
+        await session.commit()
+
+
+async def set_wallet_status(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    wallet_id: str,
+    status: WalletStatus,
+) -> None:
+    """Устанавливает статус кошелька для предусловий E2E-теста.
+
+    Args:
+        session_factory: Фабрика асинхронных SQLAlchemy-сессий.
+        wallet_id: Идентификатор кошелька.
+        status: Новый статус кошелька.
+    """
+    async with session_factory() as session:
+        wallet_model = await session.scalar(
+            select(WalletModel).where(WalletModel.id == UUID(wallet_id))
+        )
+        assert wallet_model is not None
+        wallet_model.status = status.value
         await session.commit()
 
 
@@ -188,6 +215,32 @@ async def test_unauthenticated_create_transfer_returns_unauthorized(
     assert response.status_code == 401
 
 
+async def test_unauthenticated_get_my_transfers_returns_unauthorized(
+    api_client: AsyncClient,
+) -> None:
+    """Проверяет 401 для списка P2P-переводов без access token.
+
+    Args:
+        api_client: HTTP-клиент FastAPI с тестовой базой данных.
+    """
+    response = await api_client.get("/transfers/me")
+
+    assert response.status_code == 401
+
+
+async def test_unauthenticated_get_transfer_by_id_returns_unauthorized(
+    api_client: AsyncClient,
+) -> None:
+    """Проверяет 401 для чтения P2P-перевода по id без access token.
+
+    Args:
+        api_client: HTTP-клиент FastAPI с тестовой базой данных.
+    """
+    response = await api_client.get(f"/transfers/{uuid4()}")
+
+    assert response.status_code == 401
+
+
 async def test_user_cannot_transfer_from_another_users_wallet(
     api_client: AsyncClient,
     e2e_async_session_factory: async_sessionmaker[AsyncSession],
@@ -225,8 +278,10 @@ async def test_user_cannot_transfer_from_another_users_wallet(
         },
         headers=auth_headers(first_token),
     )
+    body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 404
+    assert body["detail"] == "Transfer was not found."
     assert (
         await count_outbox_events(
             e2e_async_session_factory,
@@ -272,8 +327,10 @@ async def test_insufficient_funds_returns_error(
         },
         headers=auth_headers(sender_token),
     )
+    body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 409
+    assert body["detail"] == "Insufficient transfer funds."
     assert (
         await count_outbox_events(
             e2e_async_session_factory,
@@ -315,8 +372,148 @@ async def test_same_wallet_transfer_returns_error(
         },
         headers=auth_headers(access_token),
     )
+    body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 400
+    assert body["detail"] == "Invalid transfer request."
+
+
+async def test_currency_mismatch_returns_bad_request(
+    api_client: AsyncClient,
+) -> None:
+    """Проверяет 400, если валюты кошельков перевода не совпадают.
+
+    Args:
+        api_client: HTTP-клиент FastAPI с тестовой базой данных.
+    """
+    sender_token, sender_wallet = await make_user_wallet(
+        api_client,
+        email="transfer-currency-mismatch-sender@example.com",
+        currency="USD",
+    )
+    _, recipient_wallet = await make_user_wallet(
+        api_client,
+        email="transfer-currency-mismatch-recipient@example.com",
+        currency="EUR",
+    )
+
+    response = await api_client.post(
+        "/transfers",
+        json={
+            "operation_id": str(uuid4()),
+            "sender_wallet_id": wallet_id(sender_wallet),
+            "recipient_wallet_id": wallet_id(recipient_wallet),
+            "amount_minor": 100,
+            "currency": "USD",
+        },
+        headers=auth_headers(sender_token),
+    )
+    body = cast(dict[str, Any], response.json())
+
+    assert response.status_code == 400
+    assert body["detail"] == "Invalid transfer request."
+
+
+async def test_invalid_transfer_amount_returns_bad_request(
+    api_client: AsyncClient,
+) -> None:
+    """Проверяет 400 для неположительной суммы P2P-перевода.
+
+    Args:
+        api_client: HTTP-клиент FastAPI с тестовой базой данных.
+    """
+    access_token = await register_user_and_get_access_token(
+        api_client,
+        email="transfer-invalid-amount@example.com",
+    )
+
+    response = await api_client.post(
+        "/transfers",
+        json={
+            "operation_id": str(uuid4()),
+            "sender_wallet_id": str(uuid4()),
+            "recipient_wallet_id": str(uuid4()),
+            "amount_minor": 0,
+            "currency": "USD",
+        },
+        headers=auth_headers(access_token),
+    )
+    body = cast(dict[str, Any], response.json())
+
+    assert response.status_code == 400
+    assert body["detail"] == "Invalid transfer request."
+
+
+async def test_invalid_transfer_currency_returns_bad_request(
+    api_client: AsyncClient,
+) -> None:
+    """Проверяет 400 для пустой валюты P2P-перевода.
+
+    Args:
+        api_client: HTTP-клиент FastAPI с тестовой базой данных.
+    """
+    access_token = await register_user_and_get_access_token(
+        api_client,
+        email="transfer-invalid-currency@example.com",
+    )
+
+    response = await api_client.post(
+        "/transfers",
+        json={
+            "operation_id": str(uuid4()),
+            "sender_wallet_id": str(uuid4()),
+            "recipient_wallet_id": str(uuid4()),
+            "amount_minor": 100,
+            "currency": "   ",
+        },
+        headers=auth_headers(access_token),
+    )
+    body = cast(dict[str, Any], response.json())
+
+    assert response.status_code == 400
+    assert body["detail"] == "Invalid transfer request."
+
+
+async def test_inactive_wallet_transfer_returns_bad_request(
+    api_client: AsyncClient,
+    e2e_async_session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Проверяет 400 для P2P-перевода с неактивным кошельком.
+
+    Args:
+        api_client: HTTP-клиент FastAPI с тестовой базой данных.
+        e2e_async_session_factory: Фабрика асинхронных SQLAlchemy-сессий.
+    """
+    sender_token, sender_wallet = await make_user_wallet(
+        api_client,
+        email="transfer-inactive-sender@example.com",
+    )
+    _, recipient_wallet = await make_user_wallet(
+        api_client,
+        email="transfer-inactive-recipient@example.com",
+    )
+    sender_wallet_id = wallet_id(sender_wallet)
+    await set_wallet_status(
+        e2e_async_session_factory,
+        wallet_id=sender_wallet_id,
+        status=WalletStatus.BLOCKED,
+    )
+
+    response = await api_client.post(
+        "/transfers",
+        json={
+            "operation_id": str(uuid4()),
+            "sender_wallet_id": sender_wallet_id,
+            "recipient_wallet_id": wallet_id(recipient_wallet),
+            "amount_minor": 100,
+            "currency": "USD",
+        },
+        headers=auth_headers(sender_token),
+    )
+    body = cast(dict[str, Any], response.json())
+
+    assert response.status_code == 400
+    assert body["detail"] == "Invalid transfer request."
 
 
 async def test_duplicate_operation_id_returns_conflict(
@@ -365,8 +562,10 @@ async def test_duplicate_operation_id_returns_conflict(
         },
         headers=auth_headers(sender_token),
     )
+    body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 409
+    assert body["detail"] == "Transfer operation already exists."
     assert (
         await count_outbox_events(
             e2e_async_session_factory,
@@ -432,6 +631,29 @@ async def test_user_can_list_own_transfers(
     assert [transfer["id"] for transfer in transfers] == [own_transfer["id"]]
 
 
+async def test_missing_transfer_returns_not_found(
+    api_client: AsyncClient,
+) -> None:
+    """Проверяет безопасный 404 для несуществующего P2P-перевода.
+
+    Args:
+        api_client: HTTP-клиент FastAPI с тестовой базой данных.
+    """
+    access_token = await register_user_and_get_access_token(
+        api_client,
+        email="transfer-missing@example.com",
+    )
+
+    response = await api_client.get(
+        f"/transfers/{uuid4()}",
+        headers=auth_headers(access_token),
+    )
+    body = cast(dict[str, Any], response.json())
+
+    assert response.status_code == 404
+    assert body["detail"] == "Transfer was not found."
+
+
 async def test_user_cannot_get_another_users_transfer(
     api_client: AsyncClient,
     e2e_async_session_factory: async_sessionmaker[AsyncSession],
@@ -469,8 +691,10 @@ async def test_user_cannot_get_another_users_transfer(
         f"/transfers/{transfer['id']}",
         headers=auth_headers(second_token),
     )
+    body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 404
+    assert body["detail"] == "Transfer was not found."
 
 
 async def test_balances_changed_correctly_after_successful_transfer(

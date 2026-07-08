@@ -27,3 +27,15 @@ class SourceWalletEqualsTargetWalletError(PaymentsApplicationError):
 
 class WalletCurrencyMismatchError(PaymentsApplicationError):
     """Сообщает, что валюты кошельков или команды не совпадают."""
+
+
+class InternalDepositLedgerCreationFailedError(PaymentsApplicationError):
+    """Сообщает, что ledger transaction internal deposit не удалось сохранить."""
+
+
+class InternalDepositBalanceUpdateFailedError(PaymentsApplicationError):
+    """Сообщает, что balance projection internal deposit не удалось обновить."""
+
+
+class InternalDepositOutboxEventCreationFailedError(PaymentsApplicationError):
+    """Сообщает, что outbox event internal deposit не удалось сохранить."""

@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from payflow.modules.financial_core.application.ledger.exceptions import (
     LedgerTransactionAlreadyExistsError,
+    LedgerTransactionCreationFailedError,
 )
 from payflow.modules.financial_core.application.ledger.repositories import (
     LedgerTransactionRepository,
@@ -75,6 +76,8 @@ class PostLedgerTransactionUseCase:
             InvalidLedgerEntriesError: Если entries пустые или некорректные.
             MixedLedgerCurrenciesError: Если entries содержат разные валюты.
             UnbalancedLedgerTransactionError: Если DEBIT и CREDIT суммы не равны.
+            LedgerTransactionCreationFailedError: Если ledger transaction не удалось
+                сохранить.
         """
         async with self._transaction_manager:
             if await self._transactions.exists_by_operation_id(command.operation_id):
@@ -99,4 +102,11 @@ class PostLedgerTransactionUseCase:
                 ),
             )
 
-            return await self._transactions.create(transaction)
+            try:
+                return await self._transactions.create(transaction)
+            except LedgerTransactionAlreadyExistsError:
+                raise
+            except Exception as exc:
+                raise LedgerTransactionCreationFailedError(
+                    "Ledger transaction creation failed."
+                ) from exc

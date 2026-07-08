@@ -18,6 +18,10 @@ from payflow.modules.financial_core.application.transfers.exceptions import (
     InsufficientTransferFundsError,
     RecipientWalletNotFoundError,
     SenderWalletNotFoundError,
+    TransferBalanceUpdateFailedError,
+    TransferCreationFailedError,
+    TransferLedgerCreationFailedError,
+    TransferOutboxEventCreationFailedError,
     TransferWalletCurrencyMismatchError,
     TransferWalletOwnershipError,
 )
@@ -131,6 +135,13 @@ class CreateP2PTransferUseCase:
             TransferWalletCurrencyMismatchError: Если валюты не совпадают.
             InsufficientTransferFundsError: Если средств отправителя недостаточно.
             WalletBalanceNotFoundError: Если balance projection не найдена.
+            TransferCreationFailedError: Если P2P-перевод не удалось сохранить.
+            TransferLedgerCreationFailedError: Если ledger transaction не удалось
+                сохранить.
+            TransferBalanceUpdateFailedError: Если balance projection не удалось
+                обновить.
+            TransferOutboxEventCreationFailedError: Если outbox event не удалось
+                сохранить.
         """
         self._validate_amount(amount_minor)
         self._validate_wallets(sender_wallet_id, recipient_wallet_id)
@@ -173,16 +184,24 @@ class CreateP2PTransferUseCase:
                     "Sender wallet available balance is insufficient."
                 )
 
-            transfer = await self._transfers.create(
-                Transfer(
-                    operation_id=operation_id,
-                    sender_user_id=sender_user_id,
-                    sender_wallet_id=sender_wallet_id,
-                    recipient_wallet_id=recipient_wallet_id,
-                    amount_minor=amount_minor,
-                    currency=normalized_currency,
+            try:
+                transfer = await self._transfers.create(
+                    Transfer(
+                        operation_id=operation_id,
+                        sender_user_id=sender_user_id,
+                        sender_wallet_id=sender_wallet_id,
+                        recipient_wallet_id=recipient_wallet_id,
+                        amount_minor=amount_minor,
+                        currency=normalized_currency,
+                    )
                 )
-            )
+            except DuplicateTransferOperationError:
+                raise
+            except Exception as exc:
+                raise TransferCreationFailedError(
+                    "P2P transfer creation failed."
+                ) from exc
+
             try:
                 transaction = await self._ledger_transactions.create(
                     self._build_ledger_transaction(
@@ -197,26 +216,46 @@ class CreateP2PTransferUseCase:
                 raise DuplicateTransferOperationError(
                     "Transfer operation already exists."
                 ) from exc
+            except Exception as exc:
+                raise TransferLedgerCreationFailedError(
+                    "P2P transfer ledger transaction creation failed."
+                ) from exc
 
             sender_balance.decrease_available_amount(amount_minor)
             recipient_balance.increase_available_amount(amount_minor)
-            sender_balance = await self._balances.save(sender_balance)
-            recipient_balance = await self._balances.save(recipient_balance)
+            try:
+                sender_balance = await self._balances.save(sender_balance)
+                recipient_balance = await self._balances.save(recipient_balance)
+            except Exception as exc:
+                raise TransferBalanceUpdateFailedError(
+                    "P2P transfer balance update failed."
+                ) from exc
 
             transfer.complete(ledger_transaction_id=transaction.id)
-            transfer = await self._transfers.save_status(transfer)
-            await self._outbox_events.create(
-                p2p_transfer_completed_event(
-                    transfer_id=transfer.id,
-                    operation_id=operation_id,
-                    sender_user_id=sender_user_id,
-                    sender_wallet_id=sender_wallet_id,
-                    recipient_wallet_id=recipient_wallet_id,
-                    ledger_transaction_id=transaction.id,
-                    amount_minor=amount_minor,
-                    currency=normalized_currency,
+            try:
+                transfer = await self._transfers.save_status(transfer)
+            except Exception as exc:
+                raise TransferCreationFailedError(
+                    "P2P transfer status update failed."
+                ) from exc
+
+            try:
+                await self._outbox_events.create(
+                    p2p_transfer_completed_event(
+                        transfer_id=transfer.id,
+                        operation_id=operation_id,
+                        sender_user_id=sender_user_id,
+                        sender_wallet_id=sender_wallet_id,
+                        recipient_wallet_id=recipient_wallet_id,
+                        ledger_transaction_id=transaction.id,
+                        amount_minor=amount_minor,
+                        currency=normalized_currency,
+                    )
                 )
-            )
+            except Exception as exc:
+                raise TransferOutboxEventCreationFailedError(
+                    "P2P transfer outbox event creation failed."
+                ) from exc
 
             return P2PTransferResult(
                 transfer=transfer,
