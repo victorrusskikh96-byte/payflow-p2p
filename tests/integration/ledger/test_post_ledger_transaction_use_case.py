@@ -247,3 +247,30 @@ async def test_unbalanced_transaction_is_not_persisted(
 
     assert await count_ledger_transactions(async_session) == 0
     assert await count_ledger_entries(async_session) == 0
+
+
+async def test_ledger_posting_reuses_external_transaction_without_committing(
+    async_session: AsyncSession,
+) -> None:
+    """Проверяет, что ledger use case не коммитит активную внешнюю транзакцию.
+
+    Args:
+        async_session: Асинхронная SQLAlchemy-сессия.
+    """
+    debit_wallet = await create_wallet(async_session)
+    credit_wallet = await create_wallet(async_session)
+    await async_session.commit()
+    await async_session.begin()
+
+    await make_use_case(async_session).execute(
+        make_post_command(
+            debit_wallet_id=debit_wallet.id,
+            credit_wallet_id=credit_wallet.id,
+        )
+    )
+
+    assert async_session.in_transaction()
+    await async_session.rollback()
+    async_session.expire_all()
+    assert await count_ledger_transactions(async_session) == 0
+    assert await count_ledger_entries(async_session) == 0

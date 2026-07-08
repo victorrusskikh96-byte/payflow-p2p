@@ -707,6 +707,7 @@ async def test_insufficient_funds_does_not_complete_transfer_or_change_balances(
             currency="USD",
         )
 
+    assert await count_transfers(async_session) == 0
     assert await count_completed_transfers(async_session) == 0
     assert await count_ledger_transactions(async_session) == 0
     assert await count_ledger_entries(async_session) == 0
@@ -813,6 +814,7 @@ async def test_sender_cannot_transfer_from_another_users_wallet(
 
     assert await count_transfers(async_session) == 0
     assert await count_ledger_transactions(async_session) == 0
+    assert await count_ledger_entries(async_session) == 0
     assert (
         await count_outbox_events(async_session, event_type="p2p_transfer.completed")
         == 0
