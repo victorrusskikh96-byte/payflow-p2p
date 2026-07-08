@@ -1,13 +1,13 @@
-"""Интеграционные тесты SQLAlchemy-репозитория outbox events."""
+"""Интеграционные тесты SQLAlchemy-репозитория outbox_events."""
 
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from payflow.modules.financial_core.domain.outbox import (
+from payflow.modules.financial_core.application.events import (
     JsonPayload,
-    OutboxEvent,
+    OutboxEventData,
     OutboxEventStatus,
 )
 from payflow.modules.financial_core.infrastructure.models import OutboxEventModel
@@ -16,38 +16,31 @@ from payflow.modules.financial_core.infrastructure.repositories.outbox import (
 )
 
 
-def make_outbox_event(
+def make_outbox_event_data(
     *,
     event_id: UUID | None = None,
-    status: OutboxEventStatus = OutboxEventStatus.PENDING,
     occurred_at: datetime | None = None,
-    created_at: datetime | None = None,
     payload: JsonPayload | None = None,
-) -> OutboxEvent:
-    """Создает outbox event для интеграционных тестов.
+) -> OutboxEventData:
+    """Создает данные outbox event для интеграционных тестов.
 
     Args:
         event_id: Идентификатор события.
-        status: Статус события.
         occurred_at: Момент возникновения события.
-        created_at: Момент создания записи.
         payload: Payload события.
 
     Returns:
-        Outbox event с заданными параметрами.
+        Данные outbox event с заданными параметрами.
     """
-    return OutboxEvent(
-        id=event_id,
+    return OutboxEventData(
+        id=event_id if event_id is not None else uuid4(),
         event_type="wallet.created",
         aggregate_type="wallet",
         aggregate_id=str(uuid4()),
         payload=payload
         if payload is not None
         else {"wallet_id": str(uuid4()), "currency": "USD"},
-        status=status,
-        occurred_at=occurred_at,
-        created_at=created_at,
-        last_error="error" if status is OutboxEventStatus.FAILED else None,
+        occurred_at=occurred_at if occurred_at is not None else datetime.now(UTC),
     )
 
 
@@ -58,7 +51,7 @@ async def test_create_outbox_event(async_session: AsyncSession) -> None:
         async_session: Асинхронная SQLAlchemy-сессия.
     """
     repository = SQLAlchemyOutboxEventRepository(async_session)
-    event = make_outbox_event()
+    event = make_outbox_event_data()
 
     created_event = await repository.create(event)
 
@@ -75,7 +68,7 @@ async def test_get_outbox_event_by_id(async_session: AsyncSession) -> None:
         async_session: Асинхронная SQLAlchemy-сессия.
     """
     repository = SQLAlchemyOutboxEventRepository(async_session)
-    created_event = await repository.create(make_outbox_event())
+    created_event = await repository.create(make_outbox_event_data())
 
     found_event = await repository.get_by_id(created_event.id)
 
@@ -89,8 +82,9 @@ async def test_get_pending_events(async_session: AsyncSession) -> None:
         async_session: Асинхронная SQLAlchemy-сессия.
     """
     repository = SQLAlchemyOutboxEventRepository(async_session)
-    pending_event = await repository.create(make_outbox_event())
-    await repository.create(make_outbox_event(status=OutboxEventStatus.FAILED))
+    pending_event = await repository.create(make_outbox_event_data())
+    failed_event = await repository.create(make_outbox_event_data())
+    await repository.mark_failed(failed_event.id, last_error="publish failed")
 
     pending_events = await repository.get_pending(limit=10)
 
@@ -108,11 +102,13 @@ async def test_pending_events_are_returned_in_oldest_order(
     base_time = datetime(2026, 7, 6, 8, 0, tzinfo=UTC)
     repository = SQLAlchemyOutboxEventRepository(async_session)
     newest_event = await repository.create(
-        make_outbox_event(occurred_at=base_time + timedelta(minutes=2))
+        make_outbox_event_data(occurred_at=base_time + timedelta(minutes=2))
     )
-    oldest_event = await repository.create(make_outbox_event(occurred_at=base_time))
+    oldest_event = await repository.create(
+        make_outbox_event_data(occurred_at=base_time)
+    )
     middle_event = await repository.create(
-        make_outbox_event(occurred_at=base_time + timedelta(minutes=1))
+        make_outbox_event_data(occurred_at=base_time + timedelta(minutes=1))
     )
 
     pending_events = await repository.get_pending(limit=10)
@@ -133,7 +129,7 @@ async def test_published_event_is_not_returned_as_pending(
         async_session: Асинхронная SQLAlchemy-сессия.
     """
     repository = SQLAlchemyOutboxEventRepository(async_session)
-    event = await repository.create(make_outbox_event())
+    event = await repository.create(make_outbox_event_data())
 
     published_event = await repository.mark_published(event.id)
 
@@ -152,7 +148,7 @@ async def test_failed_event_can_be_found_among_failed(
         async_session: Асинхронная SQLAlchemy-сессия.
     """
     repository = SQLAlchemyOutboxEventRepository(async_session)
-    event = await repository.create(make_outbox_event())
+    event = await repository.create(make_outbox_event_data())
 
     failed_event = await repository.mark_failed(event.id, last_error="publish failed")
     failed_events = await repository.get_failed(limit=10)
@@ -169,7 +165,7 @@ async def test_attempts_are_increased(async_session: AsyncSession) -> None:
         async_session: Асинхронная SQLAlchemy-сессия.
     """
     repository = SQLAlchemyOutboxEventRepository(async_session)
-    event = await repository.create(make_outbox_event())
+    event = await repository.create(make_outbox_event_data())
 
     updated_event = await repository.increase_attempts(event.id)
 
@@ -192,7 +188,7 @@ async def test_payload_is_saved_and_loaded_correctly(
         "amount_minor": 1250,
         "currency": "USD",
     }
-    created_event = await repository.create(make_outbox_event(payload=payload))
+    created_event = await repository.create(make_outbox_event_data(payload=payload))
 
     found_event = await repository.get_by_id(created_event.id)
 
@@ -209,9 +205,9 @@ async def test_failed_event_can_be_returned_to_pending(
         async_session: Асинхронная SQLAlchemy-сессия.
     """
     repository = SQLAlchemyOutboxEventRepository(async_session)
-    failed_event = await repository.create(
-        make_outbox_event(status=OutboxEventStatus.FAILED)
-    )
+    event = await repository.create(make_outbox_event_data())
+    failed_event = await repository.mark_failed(event.id, last_error="publish failed")
+    assert failed_event is not None
 
     pending_event = await repository.return_failed_to_pending(failed_event.id)
 
@@ -233,7 +229,7 @@ async def test_repository_uses_existing_transaction(
     try:
         await session.begin()
         repository = SQLAlchemyOutboxEventRepository(session)
-        await repository.create(make_outbox_event(event_id=event_id))
+        await repository.create(make_outbox_event_data(event_id=event_id))
         assert await repository.get_by_id(event_id) is not None
         await session.rollback()
     finally:
@@ -254,8 +250,8 @@ async def test_pending_events_skip_locked_rows(
     """
     async with async_session_factory() as setup_session:
         setup_repository = SQLAlchemyOutboxEventRepository(setup_session)
-        first_event = await setup_repository.create(make_outbox_event())
-        second_event = await setup_repository.create(make_outbox_event())
+        first_event = await setup_repository.create(make_outbox_event_data())
+        second_event = await setup_repository.create(make_outbox_event_data())
         await setup_session.commit()
 
     locker_session = async_session_factory()

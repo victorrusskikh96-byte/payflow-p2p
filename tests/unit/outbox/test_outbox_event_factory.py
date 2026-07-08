@@ -1,16 +1,18 @@
-"""Unit-тесты фабрики outbox events."""
+"""Unit-тесты helper-функций outbox events."""
 
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from payflow.modules.financial_core.application.outbox.event_factory import (
-    OutboxEventFactory,
+from payflow.modules.financial_core.application.events import (
+    internal_deposit_completed_event,
+    p2p_transfer_completed_event,
+    wallet_created_event,
 )
 
 
 def test_wallet_created_has_correct_event_type() -> None:
     """Проверяет event_type события wallet.created."""
-    event = OutboxEventFactory.wallet_created(
+    event = wallet_created_event(
         wallet_id=uuid4(),
         user_id=uuid4(),
         currency="USD",
@@ -21,7 +23,7 @@ def test_wallet_created_has_correct_event_type() -> None:
 
 def test_internal_deposit_completed_has_correct_event_type() -> None:
     """Проверяет event_type события internal_deposit.completed."""
-    event = OutboxEventFactory.internal_deposit_completed(
+    event = internal_deposit_completed_event(
         operation_id=uuid4(),
         source_wallet_id=uuid4(),
         target_wallet_id=uuid4(),
@@ -35,7 +37,7 @@ def test_internal_deposit_completed_has_correct_event_type() -> None:
 
 def test_p2p_transfer_completed_has_correct_event_type() -> None:
     """Проверяет event_type события p2p_transfer.completed."""
-    event = OutboxEventFactory.p2p_transfer_completed(
+    event = p2p_transfer_completed_event(
         transfer_id=uuid4(),
         operation_id=uuid4(),
         sender_user_id=uuid4(),
@@ -55,7 +57,7 @@ def test_uuid_and_datetime_are_serialized_as_json_safe_values() -> None:
     user_id = uuid4()
     occurred_at = datetime(2026, 7, 6, 9, 30, tzinfo=UTC)
 
-    event = OutboxEventFactory.wallet_created(
+    event = wallet_created_event(
         wallet_id=wallet_id,
         user_id=user_id,
         currency="usd",
@@ -71,7 +73,7 @@ def test_uuid_and_datetime_are_serialized_as_json_safe_values() -> None:
 
 def test_internal_deposit_payload_contains_amount_and_currency() -> None:
     """Проверяет amount_minor и currency в payload internal deposit."""
-    event = OutboxEventFactory.internal_deposit_completed(
+    event = internal_deposit_completed_event(
         operation_id=uuid4(),
         source_wallet_id=uuid4(),
         target_wallet_id=uuid4(),
@@ -86,7 +88,7 @@ def test_internal_deposit_payload_contains_amount_and_currency() -> None:
 
 def test_p2p_transfer_payload_contains_amount_and_currency() -> None:
     """Проверяет amount_minor и currency в payload P2P-перевода."""
-    event = OutboxEventFactory.p2p_transfer_completed(
+    event = p2p_transfer_completed_event(
         transfer_id=uuid4(),
         operation_id=uuid4(),
         sender_user_id=uuid4(),
@@ -104,7 +106,7 @@ def test_p2p_transfer_payload_contains_amount_and_currency() -> None:
 def test_payload_uuid_fields_are_strings() -> None:
     """Проверяет, что UUID-поля в payload представлены строками."""
     transfer_id = uuid4()
-    event = OutboxEventFactory.p2p_transfer_completed(
+    event = p2p_transfer_completed_event(
         transfer_id=transfer_id,
         operation_id=uuid4(),
         sender_user_id=uuid4(),

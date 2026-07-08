@@ -3,11 +3,9 @@
 from dataclasses import dataclass
 from uuid import UUID
 
-from payflow.modules.financial_core.application.outbox.event_factory import (
-    OutboxEventFactory,
-)
-from payflow.modules.financial_core.application.outbox.repositories import (
-    OutboxEventRepository,
+from payflow.modules.financial_core.application.events import (
+    OutboxEventWriter,
+    wallet_created_event,
 )
 from payflow.modules.financial_core.application.wallets.repositories import (
     WalletBalanceRepository,
@@ -44,7 +42,7 @@ class CreateWalletUseCase:
         users: UserRepository,
         wallets: WalletRepository,
         balances: WalletBalanceRepository,
-        outbox_events: OutboxEventRepository,
+        outbox_events: OutboxEventWriter,
         transaction_manager: TransactionManager,
     ) -> None:
         """Создает use case открытия кошелька.
@@ -94,7 +92,7 @@ class CreateWalletUseCase:
                 BalanceProjection(wallet_id=wallet.id, currency=wallet.currency)
             )
             await self._outbox_events.create(
-                OutboxEventFactory.wallet_created(
+                wallet_created_event(
                     wallet_id=wallet.id,
                     user_id=wallet.user_id,
                     currency=wallet.currency,

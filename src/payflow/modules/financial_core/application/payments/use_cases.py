@@ -3,17 +3,15 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+from payflow.modules.financial_core.application.events import (
+    OutboxEventWriter,
+    internal_deposit_completed_event,
+)
 from payflow.modules.financial_core.application.ledger.exceptions import (
     LedgerTransactionAlreadyExistsError,
 )
 from payflow.modules.financial_core.application.ledger.repositories import (
     LedgerTransactionRepository,
-)
-from payflow.modules.financial_core.application.outbox.event_factory import (
-    OutboxEventFactory,
-)
-from payflow.modules.financial_core.application.outbox.repositories import (
-    OutboxEventRepository,
 )
 from payflow.modules.financial_core.application.payments.exceptions import (
     DuplicateInternalDepositOperationError,
@@ -66,7 +64,7 @@ class InternalDepositUseCase:
         wallets: WalletRepository,
         balances: WalletBalanceRepository,
         ledger_transactions: LedgerTransactionRepository,
-        outbox_events: OutboxEventRepository,
+        outbox_events: OutboxEventWriter,
         transaction_manager: TransactionManager,
     ) -> None:
         """Создает use case internal deposit.
@@ -175,7 +173,7 @@ class InternalDepositUseCase:
             source_balance = await self._balances.save(source_balance)
             target_balance = await self._balances.save(target_balance)
             await self._outbox_events.create(
-                OutboxEventFactory.internal_deposit_completed(
+                internal_deposit_completed_event(
                     operation_id=operation_id,
                     source_wallet_id=source_wallet_id,
                     target_wallet_id=target_wallet_id,

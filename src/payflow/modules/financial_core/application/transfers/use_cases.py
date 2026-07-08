@@ -3,17 +3,15 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+from payflow.modules.financial_core.application.events import (
+    OutboxEventWriter,
+    p2p_transfer_completed_event,
+)
 from payflow.modules.financial_core.application.ledger.exceptions import (
     LedgerTransactionAlreadyExistsError,
 )
 from payflow.modules.financial_core.application.ledger.repositories import (
     LedgerTransactionRepository,
-)
-from payflow.modules.financial_core.application.outbox.event_factory import (
-    OutboxEventFactory,
-)
-from payflow.modules.financial_core.application.outbox.repositories import (
-    OutboxEventRepository,
 )
 from payflow.modules.financial_core.application.transfers.exceptions import (
     InactiveTransferWalletError,
@@ -77,7 +75,7 @@ class CreateP2PTransferUseCase:
         wallets: WalletRepository,
         balances: WalletBalanceRepository,
         ledger_transactions: LedgerTransactionRepository,
-        outbox_events: OutboxEventRepository,
+        outbox_events: OutboxEventWriter,
         transaction_manager: TransactionManager,
     ) -> None:
         """Создает use case P2P-перевода.
@@ -208,7 +206,7 @@ class CreateP2PTransferUseCase:
             transfer.complete(ledger_transaction_id=transaction.id)
             transfer = await self._transfers.save_status(transfer)
             await self._outbox_events.create(
-                OutboxEventFactory.p2p_transfer_completed(
+                p2p_transfer_completed_event(
                     transfer_id=transfer.id,
                     operation_id=operation_id,
                     sender_user_id=sender_user_id,

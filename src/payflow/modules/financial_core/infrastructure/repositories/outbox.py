@@ -1,23 +1,24 @@
-"""SQLAlchemy-репозиторий outbox events."""
+"""SQLAlchemy-репозиторий таблицы outbox_events."""
 
+from datetime import UTC, datetime
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from payflow.modules.financial_core.application.outbox.repositories import (
-    OutboxEventRepository,
-)
-from payflow.modules.financial_core.domain.outbox import OutboxEvent, OutboxEventStatus
-from payflow.modules.financial_core.infrastructure.mappers.outbox import (
-    outbox_event_entity_to_model,
-    outbox_event_model_to_entity,
+from payflow.modules.financial_core.application.events import (
+    JsonPayload,
+    OutboxEventData,
+    OutboxEventRecord,
+    OutboxEventStatus,
+    OutboxEventWriter,
 )
 from payflow.modules.financial_core.infrastructure.models import OutboxEventModel
 
 
-class SQLAlchemyOutboxEventRepository(OutboxEventRepository):
-    """Работает с outbox events через асинхронную SQLAlchemy-сессию."""
+class SQLAlchemyOutboxEventRepository(OutboxEventWriter):
+    """Работает с таблицей outbox_events через асинхронную SQLAlchemy-сессию."""
 
     def __init__(self, session: AsyncSession) -> None:
         """Создает репозиторий outbox events.
@@ -27,24 +28,37 @@ class SQLAlchemyOutboxEventRepository(OutboxEventRepository):
         """
         self._session = session
 
-    async def create(self, event: OutboxEvent) -> OutboxEvent:
-        """Сохраняет новый outbox event в базе данных.
+    async def create(self, event: OutboxEventData) -> OutboxEventRecord:
+        """Сохраняет новый outbox event в текущей database transaction.
 
         Args:
-            event: Доменная сущность outbox event.
+            event: Данные события для записи в outbox_events.
 
         Returns:
-            Сохраненный outbox event.
+            Сохраненная строка outbox_events.
 
         Raises:
             sqlalchemy.exc.IntegrityError: Если база данных отклоняет ограничения.
         """
-        event_model = outbox_event_entity_to_model(event)
+        now = datetime.now(UTC)
+        event_model = OutboxEventModel(
+            id=event.id,
+            event_type=event.event_type,
+            aggregate_type=event.aggregate_type,
+            aggregate_id=event.aggregate_id,
+            payload=event.payload,
+            status=OutboxEventStatus.PENDING.value,
+            occurred_at=event.occurred_at,
+            created_at=now,
+            published_at=None,
+            attempts=0,
+            last_error=None,
+        )
         self._session.add(event_model)
         await self._session.flush()
-        return outbox_event_model_to_entity(event_model)
+        return _model_to_record(event_model)
 
-    async def get_by_id(self, event_id: UUID) -> OutboxEvent | None:
+    async def get_by_id(self, event_id: UUID) -> OutboxEventRecord | None:
         """Возвращает outbox event по идентификатору.
 
         Args:
@@ -56,9 +70,9 @@ class SQLAlchemyOutboxEventRepository(OutboxEventRepository):
         event_model = await self._session.get(OutboxEventModel, event_id)
         if event_model is None:
             return None
-        return outbox_event_model_to_entity(event_model)
+        return _model_to_record(event_model)
 
-    async def get_pending(self, *, limit: int) -> list[OutboxEvent]:
+    async def get_pending(self, *, limit: int) -> list[OutboxEventRecord]:
         """Возвращает pending events с row-level lock и SKIP LOCKED.
 
         Args:
@@ -82,12 +96,10 @@ class SQLAlchemyOutboxEventRepository(OutboxEventRepository):
             .with_for_update(skip_locked=True)
         )
         result = await self._session.scalars(statement)
-        return [
-            outbox_event_model_to_entity(event_model) for event_model in result.all()
-        ]
+        return [_model_to_record(event_model) for event_model in result.all()]
 
-    async def get_failed(self, *, limit: int) -> list[OutboxEvent]:
-        """Возвращает failed events.
+    async def get_failed(self, *, limit: int) -> list[OutboxEventRecord]:
+        """Возвращает failed events для тестов и диагностики.
 
         Args:
             limit: Максимальное количество событий.
@@ -109,11 +121,9 @@ class SQLAlchemyOutboxEventRepository(OutboxEventRepository):
             .limit(limit)
         )
         result = await self._session.scalars(statement)
-        return [
-            outbox_event_model_to_entity(event_model) for event_model in result.all()
-        ]
+        return [_model_to_record(event_model) for event_model in result.all()]
 
-    async def mark_published(self, event_id: UUID) -> OutboxEvent | None:
+    async def mark_published(self, event_id: UUID) -> OutboxEventRecord | None:
         """Помечает outbox event как опубликованный.
 
         Args:
@@ -123,24 +133,26 @@ class SQLAlchemyOutboxEventRepository(OutboxEventRepository):
             Обновленный outbox event или None, если запись не найдена.
 
         Raises:
-            OutboxEventAlreadyPublishedError: Если событие уже опубликовано.
+            ValueError: Если событие уже опубликовано.
         """
         event_model = await self._session.get(OutboxEventModel, event_id)
         if event_model is None:
             return None
+        if event_model.status == OutboxEventStatus.PUBLISHED.value:
+            raise ValueError("Outbox event is already published.")
 
-        event = outbox_event_model_to_entity(event_model)
-        event.mark_published()
-        self._apply_entity(event_model, event)
+        event_model.status = OutboxEventStatus.PUBLISHED.value
+        event_model.published_at = datetime.now(UTC)
+        event_model.last_error = None
         await self._session.flush()
-        return outbox_event_model_to_entity(event_model)
+        return _model_to_record(event_model)
 
     async def mark_failed(
         self,
         event_id: UUID,
         *,
         last_error: str,
-    ) -> OutboxEvent | None:
+    ) -> OutboxEventRecord | None:
         """Помечает outbox event как failed и сохраняет последнюю ошибку.
 
         Args:
@@ -151,20 +163,24 @@ class SQLAlchemyOutboxEventRepository(OutboxEventRepository):
             Обновленный outbox event или None, если запись не найдена.
 
         Raises:
-            InvalidOutboxEventError: Если текст ошибки пустой.
+            ValueError: Если текст ошибки пустой.
         """
+        normalized_error = last_error.strip()
+        if not normalized_error:
+            raise ValueError("Outbox event last_error cannot be empty.")
+
         event_model = await self._session.get(OutboxEventModel, event_id)
         if event_model is None:
             return None
 
-        event = outbox_event_model_to_entity(event_model)
-        event.mark_failed(last_error=last_error)
-        self._apply_entity(event_model, event)
+        event_model.status = OutboxEventStatus.FAILED.value
+        event_model.last_error = normalized_error
+        event_model.attempts += 1
         await self._session.flush()
-        return outbox_event_model_to_entity(event_model)
+        return _model_to_record(event_model)
 
-    async def increase_attempts(self, event_id: UUID) -> OutboxEvent | None:
-        """Увеличивает счетчик попыток публикации.
+    async def increase_attempts(self, event_id: UUID) -> OutboxEventRecord | None:
+        """Увеличивает счетчик попыток обработки события.
 
         Args:
             event_id: Идентификатор outbox event.
@@ -178,10 +194,13 @@ class SQLAlchemyOutboxEventRepository(OutboxEventRepository):
 
         event_model.attempts += 1
         await self._session.flush()
-        return outbox_event_model_to_entity(event_model)
+        return _model_to_record(event_model)
 
-    async def return_failed_to_pending(self, event_id: UUID) -> OutboxEvent | None:
-        """Возвращает failed outbox event в pending для повторной обработки.
+    async def return_failed_to_pending(
+        self,
+        event_id: UUID,
+    ) -> OutboxEventRecord | None:
+        """Возвращает failed outbox event в pending для будущей обработки.
 
         Args:
             event_id: Идентификатор outbox event.
@@ -193,21 +212,24 @@ class SQLAlchemyOutboxEventRepository(OutboxEventRepository):
         if event_model is None:
             return None
 
-        event = outbox_event_model_to_entity(event_model)
-        event.mark_pending()
-        self._apply_entity(event_model, event)
+        if event_model.status == OutboxEventStatus.FAILED.value:
+            event_model.status = OutboxEventStatus.PENDING.value
+            event_model.last_error = None
         await self._session.flush()
-        return outbox_event_model_to_entity(event_model)
+        return _model_to_record(event_model)
 
-    @staticmethod
-    def _apply_entity(event_model: OutboxEventModel, event: OutboxEvent) -> None:
-        event_model.event_type = event.event_type
-        event_model.aggregate_type = event.aggregate_type
-        event_model.aggregate_id = event.aggregate_id
-        event_model.payload = event.payload
-        event_model.status = event.status.value
-        event_model.occurred_at = event.occurred_at
-        event_model.created_at = event.created_at
-        event_model.published_at = event.published_at
-        event_model.attempts = event.attempts
-        event_model.last_error = event.last_error
+
+def _model_to_record(event_model: OutboxEventModel) -> OutboxEventRecord:
+    return OutboxEventRecord(
+        id=event_model.id,
+        event_type=event_model.event_type,
+        aggregate_type=event_model.aggregate_type,
+        aggregate_id=event_model.aggregate_id,
+        payload=cast(JsonPayload, event_model.payload),
+        status=OutboxEventStatus(event_model.status),
+        occurred_at=event_model.occurred_at,
+        created_at=event_model.created_at,
+        published_at=event_model.published_at,
+        attempts=event_model.attempts,
+        last_error=event_model.last_error,
+    )

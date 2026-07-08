@@ -10,11 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from payflow.core.database import get_async_session
 from payflow.modules.auth.api.dependencies import get_current_user
+from payflow.modules.financial_core.application.events import OutboxEventWriter
 from payflow.modules.financial_core.application.ledger.repositories import (
     LedgerTransactionRepository,
-)
-from payflow.modules.financial_core.application.outbox.repositories import (
-    OutboxEventRepository,
 )
 from payflow.modules.financial_core.application.transfers import (
     CreateP2PTransferUseCase,
@@ -161,7 +159,7 @@ def get_ledger_transaction_repository(
 
 def get_outbox_event_repository(
     session: Annotated[AsyncSession, Depends(get_async_session)],
-) -> OutboxEventRepository:
+) -> OutboxEventWriter:
     """Создает репозиторий outbox events для transfer use cases.
 
     Args:
@@ -202,7 +200,7 @@ def get_create_p2p_transfer_use_case(
         Depends(get_ledger_transaction_repository),
     ],
     outbox_events: Annotated[
-        OutboxEventRepository,
+        OutboxEventWriter,
         Depends(get_outbox_event_repository),
     ],
     transaction_manager: Annotated[

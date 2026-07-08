@@ -6,10 +6,13 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from payflow.modules.financial_core.application.events import (
+    OutboxEventData,
+    OutboxEventRecord,
+)
 from payflow.modules.financial_core.application.wallets.use_cases import (
     CreateWalletUseCase,
 )
-from payflow.modules.financial_core.domain.outbox import OutboxEvent
 from payflow.modules.financial_core.domain.wallets import WalletAlreadyExistsError
 from payflow.modules.financial_core.infrastructure.models import (
     OutboxEventModel,
@@ -33,14 +36,14 @@ from payflow.modules.users.infrastructure.repositories import SQLAlchemyUserRepo
 class FailingOutboxEventRepository(SQLAlchemyOutboxEventRepository):
     """Имитирует сбой сохранения outbox event внутри БД-транзакции."""
 
-    async def create(self, event: OutboxEvent) -> OutboxEvent:
+    async def create(self, event: OutboxEventData) -> OutboxEventRecord:
         """Выбрасывает RuntimeError вместо сохранения события.
 
         Args:
-            event: Доменное outbox event.
+            event: Данные события для записи.
 
         Returns:
-            Сохраненное outbox event.
+            Сохраненная строка outbox_events.
 
         Raises:
             RuntimeError: Всегда, чтобы проверить rollback операции.
