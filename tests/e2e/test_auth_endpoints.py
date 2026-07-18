@@ -1,6 +1,8 @@
 """E2E-тесты HTTP endpoints аутентификации."""
 
+from datetime import datetime
 from typing import Any, cast
+from uuid import UUID
 
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -11,15 +13,27 @@ from payflow.modules.users.infrastructure.models import UserModel
 
 
 def assert_token_pair_response(body: dict[str, Any]) -> None:
-    """Проверяет наличие непустых access и refresh tokens в ответе.
+    """Проверяет стабильную форму ответа с парой токенов.
 
     Args:
         body: JSON-тело ответа API.
     """
+    assert set(body) == {
+        "access_token",
+        "refresh_token",
+        "token_type",
+        "access_expires_at",
+        "refresh_expires_at",
+    }
     assert isinstance(body["access_token"], str)
     assert body["access_token"]
     assert isinstance(body["refresh_token"], str)
     assert body["refresh_token"]
+    assert body["token_type"] == "bearer"
+    assert isinstance(body["access_expires_at"], str)
+    assert isinstance(body["refresh_expires_at"], str)
+    datetime.fromisoformat(body["access_expires_at"])
+    datetime.fromisoformat(body["refresh_expires_at"])
 
 
 async def register_user_and_get_token_pair(
@@ -260,11 +274,15 @@ async def test_me_returns_current_user_with_valid_access_token(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 200
+    assert set(body) == {"id", "email", "status", "created_at", "updated_at"}
     assert body["email"] == "me@example.com"
     assert body["status"] == UserStatus.ACTIVE.value
     assert isinstance(body["id"], str)
+    UUID(body["id"])
     assert isinstance(body["created_at"], str)
     assert isinstance(body["updated_at"], str)
+    datetime.fromisoformat(body["created_at"])
+    datetime.fromisoformat(body["updated_at"])
 
 
 async def test_me_without_token_returns_unauthorized(

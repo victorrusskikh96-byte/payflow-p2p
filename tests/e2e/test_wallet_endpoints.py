@@ -1,7 +1,8 @@
 """E2E-тесты HTTP endpoints кошельков."""
 
+from datetime import datetime
 from typing import Any, cast
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from httpx import AsyncClient
 from sqlalchemy import func, select
@@ -57,6 +58,53 @@ def assert_zero_balance(body: dict[str, Any]) -> None:
     balance = cast(dict[str, Any], body["balance"])
     assert balance["available_amount_minor"] == 0
     assert balance["locked_amount_minor"] == 0
+
+
+def assert_wallet_with_balance_response(body: dict[str, Any]) -> None:
+    """Проверяет стабильную форму ответа кошелька с балансом.
+
+    Args:
+        body: JSON-тело ответа API.
+    """
+    assert set(body) == {"wallet", "balance"}
+
+    wallet = cast(dict[str, Any], body["wallet"])
+    balance = cast(dict[str, Any], body["balance"])
+
+    assert set(wallet) == {
+        "id",
+        "user_id",
+        "currency",
+        "status",
+        "created_at",
+        "updated_at",
+    }
+    assert isinstance(wallet["id"], str)
+    assert isinstance(wallet["user_id"], str)
+    UUID(wallet["id"])
+    UUID(wallet["user_id"])
+    assert isinstance(wallet["currency"], str)
+    assert isinstance(wallet["status"], str)
+    assert isinstance(wallet["created_at"], str)
+    assert isinstance(wallet["updated_at"], str)
+    datetime.fromisoformat(wallet["created_at"])
+    datetime.fromisoformat(wallet["updated_at"])
+
+    assert set(balance) == {
+        "wallet_id",
+        "available_amount_minor",
+        "locked_amount_minor",
+        "currency",
+        "updated_at",
+    }
+    assert balance["wallet_id"] == wallet["id"]
+    assert isinstance(balance["wallet_id"], str)
+    UUID(balance["wallet_id"])
+    assert isinstance(balance["available_amount_minor"], int)
+    assert isinstance(balance["locked_amount_minor"], int)
+    assert isinstance(balance["currency"], str)
+    assert isinstance(balance["updated_at"], str)
+    datetime.fromisoformat(balance["updated_at"])
 
 
 async def count_outbox_events(
@@ -128,6 +176,7 @@ async def create_wallet(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 201
+    assert_wallet_with_balance_response(body)
     return body
 
 
@@ -302,6 +351,8 @@ async def test_user_can_get_list_of_own_wallets(
     }
 
     assert response.status_code == 200
+    for item in body:
+        assert_wallet_with_balance_response(item)
     assert {item["wallet"]["id"] for item in body} == expected_ids
     assert {item["wallet"]["currency"] for item in body} == {"USD", "EUR"}
     assert all(item["wallet"]["user_id"] for item in body)
@@ -344,6 +395,7 @@ async def test_user_can_get_own_wallet_by_id(api_client: AsyncClient) -> None:
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 200
+    assert_wallet_with_balance_response(body)
     assert body["wallet"]["id"] == wallet_id
     assert_zero_balance(body)
 

@@ -5,7 +5,7 @@ from typing import Annotated, NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payflow.core.database import get_async_session
@@ -57,11 +57,26 @@ router = APIRouter()
 class CreateWalletRequest(BaseModel):
     """Описывает запрос на создание кошелька."""
 
+    model_config = ConfigDict(json_schema_extra={"example": {"currency": "USD"}})
+
     currency: CurrencyField
 
 
 class WalletResponse(BaseModel):
     """Описывает HTTP-представление кошелька."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "22222222-2222-4222-8222-222222222222",
+                "user_id": "11111111-1111-4111-8111-111111111111",
+                "currency": "USD",
+                "status": "ACTIVE",
+                "created_at": "2026-07-18T10:15:30+00:00",
+                "updated_at": "2026-07-18T10:15:30+00:00",
+            }
+        }
+    )
 
     id: UUID
     user_id: UUID
@@ -74,6 +89,18 @@ class WalletResponse(BaseModel):
 class WalletBalanceResponse(BaseModel):
     """Описывает HTTP-представление проекции баланса кошелька."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "wallet_id": "22222222-2222-4222-8222-222222222222",
+                "available_amount_minor": 100000,
+                "locked_amount_minor": 0,
+                "currency": "USD",
+                "updated_at": "2026-07-18T10:15:30+00:00",
+            }
+        }
+    )
+
     wallet_id: UUID
     available_amount_minor: int
     locked_amount_minor: int
@@ -83,6 +110,28 @@ class WalletBalanceResponse(BaseModel):
 
 class WalletWithBalanceResponse(BaseModel):
     """Описывает HTTP-представление кошелька с проекцией баланса."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "wallet": {
+                    "id": "22222222-2222-4222-8222-222222222222",
+                    "user_id": "11111111-1111-4111-8111-111111111111",
+                    "currency": "USD",
+                    "status": "ACTIVE",
+                    "created_at": "2026-07-18T10:15:30+00:00",
+                    "updated_at": "2026-07-18T10:15:30+00:00",
+                },
+                "balance": {
+                    "wallet_id": "22222222-2222-4222-8222-222222222222",
+                    "available_amount_minor": 100000,
+                    "locked_amount_minor": 0,
+                    "currency": "USD",
+                    "updated_at": "2026-07-18T10:15:30+00:00",
+                },
+            }
+        }
+    )
 
     wallet: WalletResponse
     balance: WalletBalanceResponse
@@ -268,6 +317,12 @@ def _raise_wallet_not_found(exc: Exception) -> NoReturn:
     "",
     response_model=WalletWithBalanceResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Создать кошелек",
+    description=(
+        "Создает кошелек текущего пользователя в указанной валюте и возвращает "
+        "данные кошелька отдельно от balance projection."
+    ),
+    operation_id="create_wallet",
 )
 async def create_wallet(
     request: CreateWalletRequest,
@@ -324,6 +379,12 @@ async def create_wallet(
     "/me",
     response_model=list[WalletWithBalanceResponse],
     status_code=status.HTTP_200_OK,
+    summary="Получить мои кошельки",
+    description=(
+        "Возвращает список кошельков текущего пользователя с отдельной "
+        "проекцией баланса для каждого кошелька."
+    ),
+    operation_id="get_my_wallets",
 )
 async def get_my_wallets(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -349,6 +410,12 @@ async def get_my_wallets(
     "/{wallet_id}",
     response_model=WalletWithBalanceResponse,
     status_code=status.HTTP_200_OK,
+    summary="Получить мой кошелек по id",
+    description=(
+        "Возвращает кошелек текущего пользователя по идентификатору. Чужие "
+        "и отсутствующие кошельки отвечают одинаковым безопасным 404."
+    ),
+    operation_id="get_wallet_by_id",
 )
 async def get_wallet_by_id(
     wallet_id: UUID,

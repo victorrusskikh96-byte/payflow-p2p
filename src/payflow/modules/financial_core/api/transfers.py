@@ -5,7 +5,7 @@ from typing import Annotated, NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, ConfigDict, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from payflow.core.database import get_async_session
@@ -73,6 +73,18 @@ router = APIRouter()
 class CreateTransferRequest(BaseModel):
     """Описывает запрос на создание P2P-перевода."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "operation_id": "33333333-3333-4333-8333-333333333333",
+                "sender_wallet_id": "22222222-2222-4222-8222-222222222222",
+                "recipient_wallet_id": "44444444-4444-4444-8444-444444444444",
+                "amount_minor": 2500,
+                "currency": "USD",
+            }
+        }
+    )
+
     operation_id: UUID
     sender_wallet_id: UUID
     recipient_wallet_id: UUID
@@ -82,6 +94,24 @@ class CreateTransferRequest(BaseModel):
 
 class TransferResponse(BaseModel):
     """Описывает HTTP-представление P2P-перевода."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "id": "55555555-5555-4555-8555-555555555555",
+                "operation_id": "33333333-3333-4333-8333-333333333333",
+                "sender_user_id": "11111111-1111-4111-8111-111111111111",
+                "sender_wallet_id": "22222222-2222-4222-8222-222222222222",
+                "recipient_wallet_id": "44444444-4444-4444-8444-444444444444",
+                "amount_minor": 2500,
+                "currency": "USD",
+                "status": "COMPLETED",
+                "ledger_transaction_id": "66666666-6666-4666-8666-666666666666",
+                "created_at": "2026-07-18T10:15:30+00:00",
+                "updated_at": "2026-07-18T10:15:30+00:00",
+            }
+        }
+    )
 
     id: UUID
     operation_id: UUID
@@ -98,6 +128,8 @@ class TransferResponse(BaseModel):
 
 class TransferListResponse(BaseModel):
     """Описывает HTTP-представление списка P2P-переводов."""
+
+    model_config = ConfigDict(json_schema_extra={"example": {"transfers": []}})
 
     transfers: list[TransferResponse]
 
@@ -293,6 +325,12 @@ def _raise_transfer_not_found(exc: Exception) -> NoReturn:
     "",
     response_model=TransferResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Создать P2P-перевод",
+    description=(
+        "Выполняет P2P-перевод от кошелька текущего пользователя к кошельку "
+        "получателя и возвращает стабильное представление transfer."
+    ),
+    operation_id="create_transfer",
 )
 async def create_transfer(
     request: CreateTransferRequest,
@@ -366,6 +404,9 @@ async def create_transfer(
     "/me",
     response_model=TransferListResponse,
     status_code=status.HTTP_200_OK,
+    summary="Получить мои P2P-переводы",
+    description="Возвращает исходящие P2P-переводы текущего пользователя.",
+    operation_id="get_my_transfers",
 )
 async def get_my_transfers(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -395,6 +436,12 @@ async def get_my_transfers(
     "/{transfer_id}",
     response_model=TransferResponse,
     status_code=status.HTTP_200_OK,
+    summary="Получить мой P2P-перевод по id",
+    description=(
+        "Возвращает исходящий P2P-перевод текущего пользователя. Чужие и "
+        "отсутствующие переводы отвечают одинаковым безопасным 404."
+    ),
+    operation_id="get_transfer_by_id",
 )
 async def get_transfer_by_id(
     transfer_id: UUID,

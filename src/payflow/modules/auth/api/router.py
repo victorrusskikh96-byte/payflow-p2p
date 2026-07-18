@@ -18,6 +18,7 @@ from payflow.modules.auth.api.schemas import (
     LogoutRequest,
     RefreshTokenRequest,
     RegisterRequest,
+    StatusResponse,
     TokenPairResponse,
 )
 from payflow.modules.auth.application import (
@@ -68,20 +69,30 @@ def _raise_invalid_refresh_token_error(exc: Exception) -> NoReturn:
     ) from exc
 
 
-@router.get("/health")
-async def auth_health_check() -> dict[str, str]:
+@router.get(
+    "/health",
+    response_model=StatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Проверить состояние Auth API",
+    description="Возвращает простой статус доступности маршрутов аутентификации.",
+    operation_id="auth_health_check",
+)
+async def auth_health_check() -> StatusResponse:
     """Возвращает состояние доступности Auth API.
 
     Returns:
-        Словарь с текущим статусом Auth API.
+        Текущий статус Auth API.
     """
-    return {"status": "ok"}
+    return StatusResponse(status="ok")
 
 
 @router.get(
     "/me",
     response_model=CurrentUserResponse,
     status_code=status.HTTP_200_OK,
+    summary="Получить текущего пользователя",
+    description="Возвращает профиль пользователя, связанного с JWT access token.",
+    operation_id="get_current_user",
 )
 async def get_me(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -101,6 +112,12 @@ async def get_me(
     "/register",
     response_model=TokenPairResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Зарегистрировать пользователя",
+    description=(
+        "Создает пользователя с учетными данными и сразу возвращает пару "
+        "access/refresh tokens."
+    ),
+    operation_id="register_user",
 )
 async def register(
     request: RegisterRequest,
@@ -150,6 +167,9 @@ async def register(
     "/refresh",
     response_model=TokenPairResponse,
     status_code=status.HTTP_200_OK,
+    summary="Обновить пару токенов",
+    description="Ротирует refresh token и возвращает новую пару токенов.",
+    operation_id="refresh_token_pair",
 )
 async def refresh(
     request: RefreshTokenRequest,
@@ -182,7 +202,11 @@ async def refresh(
 
 @router.post(
     "/logout",
+    response_model=StatusResponse,
     status_code=status.HTTP_200_OK,
+    summary="Выйти из текущей refresh-сессии",
+    description="Отзывает refresh-сессию по переданному refresh token.",
+    operation_id="logout_refresh_session",
 )
 async def logout(
     request: LogoutRequest,
@@ -190,7 +214,7 @@ async def logout(
         RevokeRefreshSessionUseCase,
         Depends(get_revoke_refresh_session_use_case),
     ],
-) -> dict[str, str]:
+) -> StatusResponse:
     """Отзывает refresh-сессию по raw refresh token.
 
     Args:
@@ -208,13 +232,16 @@ async def logout(
     except (InvalidRefreshTokenError, ExpiredRefreshTokenError) as exc:
         _raise_invalid_refresh_token_error(exc)
 
-    return {"status": "ok"}
+    return StatusResponse(status="ok")
 
 
 @router.post(
     "/login",
     response_model=TokenPairResponse,
     status_code=status.HTTP_200_OK,
+    summary="Войти по email и паролю",
+    description="Проверяет учетные данные пользователя и возвращает пару токенов.",
+    operation_id="login_user",
 )
 async def login(
     request: LoginRequest,

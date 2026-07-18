@@ -1,5 +1,6 @@
 """E2E-тесты HTTP endpoints P2P-переводов."""
 
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -103,6 +104,60 @@ def wallet_id(wallet_body: dict[str, Any]) -> str:
     return cast(str, wallet["id"])
 
 
+def assert_transfer_response(body: dict[str, Any]) -> None:
+    """Проверяет стабильную форму ответа P2P-перевода.
+
+    Args:
+        body: JSON-тело ответа API.
+    """
+    assert set(body) == {
+        "id",
+        "operation_id",
+        "sender_user_id",
+        "sender_wallet_id",
+        "recipient_wallet_id",
+        "amount_minor",
+        "currency",
+        "status",
+        "ledger_transaction_id",
+        "created_at",
+        "updated_at",
+    }
+    assert isinstance(body["id"], str)
+    assert isinstance(body["operation_id"], str)
+    assert isinstance(body["sender_user_id"], str)
+    assert isinstance(body["sender_wallet_id"], str)
+    assert isinstance(body["recipient_wallet_id"], str)
+    UUID(body["id"])
+    UUID(body["operation_id"])
+    UUID(body["sender_user_id"])
+    UUID(body["sender_wallet_id"])
+    UUID(body["recipient_wallet_id"])
+    assert isinstance(body["amount_minor"], int)
+    assert isinstance(body["currency"], str)
+    assert isinstance(body["status"], str)
+    if body["ledger_transaction_id"] is not None:
+        assert isinstance(body["ledger_transaction_id"], str)
+        UUID(body["ledger_transaction_id"])
+    assert isinstance(body["created_at"], str)
+    assert isinstance(body["updated_at"], str)
+    datetime.fromisoformat(body["created_at"])
+    datetime.fromisoformat(body["updated_at"])
+
+
+def assert_error_response(body: dict[str, Any], expected_detail: str) -> None:
+    """Проверяет контролируемую форму HTTP-ошибки.
+
+    Args:
+        body: JSON-тело ошибки API.
+        expected_detail: Ожидаемый текст поля detail.
+    """
+    assert set(body) == {"detail"}
+    assert body["detail"] == expected_detail
+    assert "Traceback" not in body["detail"]
+    assert "SQLAlchemy" not in body["detail"]
+
+
 async def create_transfer(
     api_client: AsyncClient,
     *,
@@ -141,6 +196,7 @@ async def create_transfer(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 201
+    assert_transfer_response(body)
     return body
 
 
@@ -281,7 +337,7 @@ async def test_user_cannot_transfer_from_another_users_wallet(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 404
-    assert body["detail"] == "Transfer was not found."
+    assert_error_response(body, "Transfer was not found.")
     assert (
         await count_outbox_events(
             e2e_async_session_factory,
@@ -330,7 +386,7 @@ async def test_insufficient_funds_returns_error(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 409
-    assert body["detail"] == "Insufficient transfer funds."
+    assert_error_response(body, "Insufficient transfer funds.")
     assert (
         await count_outbox_events(
             e2e_async_session_factory,
@@ -375,7 +431,7 @@ async def test_same_wallet_transfer_returns_error(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 400
-    assert body["detail"] == "Invalid transfer request."
+    assert_error_response(body, "Invalid transfer request.")
 
 
 async def test_currency_mismatch_returns_bad_request(
@@ -411,7 +467,7 @@ async def test_currency_mismatch_returns_bad_request(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 400
-    assert body["detail"] == "Invalid transfer request."
+    assert_error_response(body, "Invalid transfer request.")
 
 
 async def test_invalid_transfer_amount_returns_bad_request(
@@ -441,7 +497,7 @@ async def test_invalid_transfer_amount_returns_bad_request(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 400
-    assert body["detail"] == "Invalid transfer request."
+    assert_error_response(body, "Invalid transfer request.")
 
 
 async def test_invalid_transfer_currency_returns_bad_request(
@@ -471,7 +527,7 @@ async def test_invalid_transfer_currency_returns_bad_request(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 400
-    assert body["detail"] == "Invalid transfer request."
+    assert_error_response(body, "Invalid transfer request.")
 
 
 async def test_inactive_wallet_transfer_returns_bad_request(
@@ -513,7 +569,7 @@ async def test_inactive_wallet_transfer_returns_bad_request(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 400
-    assert body["detail"] == "Invalid transfer request."
+    assert_error_response(body, "Invalid transfer request.")
 
 
 async def test_duplicate_operation_id_returns_conflict(
@@ -565,7 +621,7 @@ async def test_duplicate_operation_id_returns_conflict(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 409
-    assert body["detail"] == "Transfer operation already exists."
+    assert_error_response(body, "Transfer operation already exists.")
     assert (
         await count_outbox_events(
             e2e_async_session_factory,
@@ -651,7 +707,7 @@ async def test_missing_transfer_returns_not_found(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 404
-    assert body["detail"] == "Transfer was not found."
+    assert_error_response(body, "Transfer was not found.")
 
 
 async def test_user_cannot_get_another_users_transfer(
@@ -694,7 +750,7 @@ async def test_user_cannot_get_another_users_transfer(
     body = cast(dict[str, Any], response.json())
 
     assert response.status_code == 404
-    assert body["detail"] == "Transfer was not found."
+    assert_error_response(body, "Transfer was not found.")
 
 
 async def test_balances_changed_correctly_after_successful_transfer(
