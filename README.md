@@ -16,8 +16,8 @@ PostgreSQL является источником истины для посто�
 Redis и Kafka не являются источником истины для денег.
 
 Outbox в текущей архитектуре - не отдельное приложение, не самостоятельный
-сервис и не бизнес-модуль. Это таблица `outbox_events` и infrastructure
-mechanism внутри `Financial Core`. Она нужна, чтобы атомарно сохранить событие
+сервис и не бизнес-модуль. Это таблица `outbox_events` и инфраструктурный
+механизм внутри `Financial Core`. Она нужна, чтобы атомарно сохранить событие
 вместе с бизнес-операцией в одной PostgreSQL transaction и подготовить данные
 для возможной будущей внешней доставки. На текущем этапе события наружу не
 публикуются.
@@ -104,49 +104,115 @@ make check
 make down
 ```
 
-## Локальное ручное тестирование через Postman
+## Ручное тестирование через Postman
 
-Для проверки successful P2P transfer локально можно использовать dev-only
-команду `dev-deposit`. Это не публичный endpoint, не admin API и не production
-payment provider. Команда доступна только в `local`, `dev`, `development`,
-`test` или `testing` окружении и завершается ошибкой в production-like
-окружениях.
+Postman-файлы для локального demo-flow находятся в каталоге `docs/postman/`:
 
-Flow:
+- `docs/postman/payflow-p2p.postman_collection.json` - коллекция с запросами.
+- `docs/postman/payflow-local.postman_environment.example.json` - пример
+  окружения для локального запуска.
 
-1. Запустить backend:
+Чтобы импортировать коллекцию:
 
-   ```bash
-   make up
-   make migrate
-   make run
-   ```
+1. Открыть Postman.
+2. Нажать `Import`.
+3. Выбрать файл `docs/postman/payflow-p2p.postman_collection.json`.
 
-2. Зарегистрировать Alice и Bob через Postman: `POST /auth/register`.
-3. Создать Alice и Bob RUB wallets через Postman: `POST /wallets`.
-4. Сохранить `alice_wallet_id` и `bob_wallet_id` в Postman environment.
-5. Пополнить wallet Alice локальной dev-only командой:
+Чтобы импортировать окружение:
+
+1. Открыть раздел `Environments`.
+2. Нажать `Import`.
+3. Выбрать файл
+   `docs/postman/payflow-local.postman_environment.example.json`.
+4. Выбрать активное окружение `PayFlow Local`.
+
+Файл-пример окружения не содержит реальных токенов, `alice_wallet_id` или
+`bob_wallet_id`. Эти значения заполняются автоматически при выполнении
+запросов через скрипты пост-обработки ответов в коллекции Postman.
+
+Перед ручным тестированием нужно запустить локальную инфраструктуру, применить
+миграции и поднять приложение:
+
+```bash
+make up
+make migrate
+make run
+```
+
+Рекомендуемый demo-flow:
+
+1. Выполнить `Healthcheck`.
+2. Выполнить `Register Alice` или `Login Alice`.
+3. Выполнить `Register Bob` или `Login Bob`.
+4. Выполнить `Get Alice Me`.
+5. Выполнить `Get Bob Me`.
+6. Выполнить `Create Alice Wallet` или `Get Alice Wallets`.
+7. Выполнить `Create Bob Wallet` или `Get Bob Wallets`.
+8. Выполнить `Alice Transfer To Bob Without Funds` и убедиться, что перевод
+   отклонен из-за недостатка средств.
+9. Пополнить wallet Alice локальной dev-only командой:
 
    ```bash
    make dev-deposit wallet_id=<alice_wallet_id> amount=100000 currency=RUB
    ```
 
-   При необходимости можно передать идемпотентный идентификатор операции:
+   Значение `<alice_wallet_id>` берется из окружения `PayFlow Local` после
+   создания или получения wallet Alice.
 
-   ```bash
-   make dev-deposit wallet_id=<alice_wallet_id> amount=100000 currency=RUB operation_id=<uuid>
-   ```
+10. Выполнить успешный P2P transfer Alice -> Bob.
+11. Проверить balances через `GET /wallets/me` для Alice и Bob.
+12. Проверить данные в PostgreSQL через PyCharm Database tool или `psql`.
 
-6. Через Postman выполнить P2P transfer Alice -> Bob: `POST /transfers`.
-7. Проверить balances через `GET /wallets/me` для Alice и Bob.
-8. При необходимости проверить Ledger и `outbox_events` напрямую в PostgreSQL.
+SQL-запрос для проверки balances:
 
-`dev-deposit` предназначен только для ручного локального тестирования. Целевой
-wallet не пополняется прямым изменением `wallet_balances`: команда открывает
-обычный database/application context и вызывает `InternalDepositUseCase`
-Financial Core. Поэтому Ledger / финансовая история, balance projection и
-строка `outbox_events` создаются тем же application flow, что и внутренняя
-операция internal deposit.
+```sql
+SELECT
+    u.email,
+    w.id AS wallet_id,
+    wb.available_amount_minor,
+    wb.locked_amount_minor,
+    wb.currency
+FROM wallets w
+JOIN users u ON u.id = w.user_id
+JOIN wallet_balances wb ON wb.wallet_id = w.id
+ORDER BY u.email;
+```
+
+SQL-запрос для проверки ledger:
+
+```sql
+SELECT
+    lt.id AS transaction_id,
+    lt.operation_id,
+    lt.operation_type,
+    le.wallet_id,
+    le.direction,
+    le.amount_minor,
+    le.currency,
+    lt.created_at
+FROM ledger_transactions lt
+JOIN ledger_entries le ON le.transaction_id = lt.id
+ORDER BY lt.created_at DESC, le.direction;
+```
+
+SQL-запрос для проверки outbox events:
+
+```sql
+SELECT event_type, payload, created_at
+FROM outbox_events
+ORDER BY created_at DESC;
+```
+
+Важные ограничения:
+
+- `dev-deposit` - только local/dev инструмент.
+- `dev-deposit` не является production-фичей.
+- `dev-deposit` использует настоящий Financial Core use case.
+- Нельзя руками менять `wallet_balances` в БД.
+- PostgreSQL является источником истины.
+- Ledger остается финансовым журналом.
+- Outbox пока только сохраняет события в PostgreSQL, публикатор Kafka не
+  реализован.
 
 ## Обзор архитектуры
 
@@ -191,7 +257,7 @@ PostgreSQL
 отдельное приложение, не отдельный сервис и не самостоятельный бизнес-модуль.
 На текущем этапе нет runtime-компонента, который публикует события наружу.
 
-## Financial Core
+## Финансовое ядро
 
 `Financial Core` расположен в `src/payflow/modules/financial_core/` и включает:
 
@@ -217,7 +283,7 @@ ledger records не остаются в промежуточном состоя�
 PostgreSQL является источником истины для финансового состояния. Ledger хранит
 неизменяемую финансовую историю, `wallet_balances` хранит атомарно обновляемую
 проекцию текущего баланса, а `outbox_events` является infrastructure/helper
-mechanism внутри Financial Core. Redis, Kafka и другие внешние
+механизм внутри Financial Core. Redis, Kafka и другие внешние
 инфраструктурные компоненты не являются источником истины для денег.
 
 Пользовательские wallets моделируются как liability accounts платформы, то есть
@@ -241,10 +307,10 @@ mechanism внутри Financial Core. Redis, Kafka и другие внешни
 - `internal_deposit.completed`.
 - `p2p_transfer.completed`.
 
-Kafka publisher для `outbox_events` пока не реализован. Outbox не публикует
+Публикатор Kafka для `outbox_events` пока не реализован. Outbox не публикует
 события наружу в текущей версии.
 
-## Failure Scenarios
+## Сценарии отказов
 
 Financial Core контролируемо отклоняет операции в следующих сценариях:
 
@@ -304,7 +370,7 @@ Wallets создают пользовательские liability accounts пл�
 операциям. Balance projection нужна для быстрого чтения текущего available и
 locked balance, но не заменяет Ledger.
 
-Accounting convention для wallet entries:
+Бухгалтерское соглашение для wallet entries:
 
 - `CREDIT` wallet увеличивает balance projection.
 - `DEBIT` wallet уменьшает balance projection.
@@ -315,7 +381,7 @@ Outbox используется application layer финансовых сцен�
 transaction откатывается, строка `outbox_events` тоже не сохраняется. В текущей
 версии сохраненные события не доставляются во внешние системы.
 
-## Use Cases
+## Сценарии использования
 
 ### Регистрация и вход
 
@@ -336,7 +402,7 @@ transaction откатывается, строка `outbox_events` тоже не
    той же PostgreSQL transaction.
 6. Событие не публикуется наружу в текущей версии.
 
-### Ledger posting
+### Создание ledger transaction
 
 1. Application use case получает `operation_id`, `operation_type` и entries.
 2. Ledger проверяет balanced transaction.
@@ -344,7 +410,7 @@ transaction откатывается, строка `outbox_events` тоже не
 4. Смешивание currencies внутри одной transaction отклоняется.
 5. Ledger records сохраняются как immutable entries.
 
-### Internal deposit
+### Внутренний deposit
 
 Internal deposit - внутренний application-level сценарий Financial Core. Он не
 является публичным payment provider API и не моделирует интеграцию с внешним
@@ -363,7 +429,7 @@ Internal deposit - внутренний application-level сценарий Finan
    той же PostgreSQL transaction.
 7. Событие не публикуется наружу в текущей версии.
 
-### P2P transfer
+### P2P-перевод
 
 1. Аутентифицированный пользователь вызывает `POST /transfers`.
 2. API берет `sender_user_id` только из JWT current user.
@@ -381,7 +447,7 @@ Internal deposit - внутренний application-level сценарий Finan
 10. При ошибке частичные изменения и строка `outbox_events` не сохраняются.
 11. Событие не публикуется наружу в текущей версии.
 
-### Failed P2P transfer: insufficient funds
+### Неуспешный P2P-перевод: недостаточно средств
 
 1. Пользователь пытается отправить сумму больше available balance.
 2. Financial Core проверяет баланс отправителя.
@@ -474,7 +540,7 @@ make typecheck
 make check
 ```
 
-## Project Status
+## Статус проекта
 
 Готово:
 
@@ -504,9 +570,9 @@ make check
 - Prometheus/Grafana.
 - CI/CD.
 
-## Roadmap
+## Дорожная карта
 
-Next:
+Далее:
 
 - Foundation для external payment provider adapter.
 - Future integrations вокруг платежных сценариев.

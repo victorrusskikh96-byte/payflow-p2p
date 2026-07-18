@@ -1,0 +1,757 @@
+{
+	"info": {
+		"_postman_id": "c39f1b24-e77b-40d2-930d-dda033e5f2f8",
+		"name": "PayFlow P2P Local",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "56469702",
+		"_collection_link": "https://victorrusskikh-96-3197945.postman.co/workspace/Victor-Russkikh's-Workspace~f489eb5b-6494-4727-8200-80938aa2616f/collection/56469702-c39f1b24-e77b-40d2-930d-dda033e5f2f8?action=share&source=collection_link&creator=56469702"
+	},
+	"item": [
+		{
+			"name": "00 Health",
+			"item": [
+				{
+					"name": "Healthcheck",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/health",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"health"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "01 Auth Alice",
+			"item": [
+				{
+					"name": "Register Alice",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Alice registered successfully\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.environment.set(\"alice_access_token\", json.access_token);",
+									"pm.environment.set(\"alice_refresh_token\", json.refresh_token);",
+									"",
+									"pm.test(\"Alice access token exists\", function () {",
+									"    pm.expect(json.access_token).to.be.a(\"string\").and.not.empty;",
+									"});",
+									"",
+									"pm.test(\"Alice refresh token exists\", function () {",
+									"    pm.expect(json.refresh_token).to.be.a(\"string\").and.not.empty;",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"alice@example.com\",\n  \"password\": \"StrongPass123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"register"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Alice Me",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Alice /auth/me returns 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.test(\"Alice email is correct\", function () {",
+									"    pm.expect(json.email).to.eql(\"alice@example.com\");",
+									"});",
+									"",
+									"pm.test(\"Alice id exists\", function () {",
+									"    pm.expect(json.id).to.be.a(\"string\").and.not.empty;",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{alice_access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/me",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"me"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Login Alice",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Alice logged in successfully\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.environment.set(\"alice_access_token\", json.access_token);",
+									"pm.environment.set(\"alice_refresh_token\", json.refresh_token);",
+									"",
+									"pm.test(\"Alice access token exists\", function () {",
+									"    pm.expect(json.access_token).to.be.a(\"string\").and.not.empty;",
+									"});",
+									"",
+									"pm.test(\"Alice refresh token exists\", function () {",
+									"    pm.expect(json.refresh_token).to.be.a(\"string\").and.not.empty;",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{alice_access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"alice@example.com\",\n  \"password\": \"StrongPass123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "02 Auth Bob",
+			"item": [
+				{
+					"name": "Register Bob",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Bob registered successfully\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.environment.set(\"bob_access_token\", json.access_token);",
+									"pm.environment.set(\"bob_refresh_token\", json.refresh_token);",
+									"",
+									"pm.test(\"Bob access token exists\", function () {",
+									"    pm.expect(json.access_token).to.be.a(\"string\").and.not.empty;",
+									"});",
+									"",
+									"pm.test(\"Bob refresh token exists\", function () {",
+									"    pm.expect(json.refresh_token).to.be.a(\"string\").and.not.empty;",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"bob@example.com\",\n  \"password\": \"StrongPass123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/register",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"register"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Login Bob",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Bob logged in successfully\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.environment.set(\"bob_access_token\", json.access_token);",
+									"pm.environment.set(\"bob_refresh_token\", json.refresh_token);",
+									"",
+									"pm.test(\"Bob access token exists\", function () {",
+									"    pm.expect(json.access_token).to.be.a(\"string\").and.not.empty;",
+									"});",
+									"",
+									"pm.test(\"Bob refresh token exists\", function () {",
+									"    pm.expect(json.refresh_token).to.be.a(\"string\").and.not.empty;",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bob_access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"bob@example.com\",\n  \"password\": \"StrongPass123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/auth/login",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"login"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Bob Me",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Bob /auth/me returns 200\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.test(\"Bob email is correct\", function () {",
+									"    pm.expect(json.email).to.eql(\"bob@example.com\");",
+									"});",
+									"",
+									"pm.test(\"Bob id exists\", function () {",
+									"    pm.expect(json.id).to.be.a(\"string\").and.not.empty;",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bob_access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/auth/me",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"auth",
+								"me"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "03 Wallets",
+			"item": [
+				{
+					"name": "Create Alice RUB Wallet",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Alice wallet created\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.environment.set(\"alice_wallet_id\", json.id);",
+									"",
+									"pm.test(\"Alice wallet id exists\", function () {",
+									"    pm.expect(json.id).to.be.a(\"string\").and.not.empty;",
+									"});",
+									"",
+									"pm.test(\"Alice wallet currency is RUB\", function () {",
+									"    pm.expect(json.currency).to.eql(\"RUB\");",
+									"});",
+									"",
+									"pm.test(\"Alice wallet starts with zero available balance\", function () {",
+									"    pm.expect(json.balance.available_amount_minor).to.eql(0);",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{alice_access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"currency\": \"RUB\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/wallets",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"wallets"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Alice Wallets",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Alice wallets returned\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.test(\"Alice has at least one wallet\", function () {",
+									"    pm.expect(json.length).to.be.greaterThan(0);",
+									"});",
+									"",
+									"const rubWallet = json.find(item => item.wallet.currency === \"RUB\");",
+									"",
+									"pm.test(\"Alice RUB wallet exists\", function () {",
+									"    pm.expect(rubWallet).to.not.be.undefined;",
+									"});",
+									"",
+									"pm.environment.set(\"alice_wallet_id\", rubWallet.wallet.id);",
+									"",
+									"pm.test(\"Alice wallet id saved\", function () {",
+									"    pm.expect(pm.environment.get(\"alice_wallet_id\")).to.be.a(\"string\").and.not.empty;",
+									"});",
+									"",
+									"pm.test(\"Alice RUB wallet balance is zero\", function () {",
+									"    pm.expect(rubWallet.balance.available_amount_minor).to.eql(0);",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{alice_access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/wallets/me",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"wallets",
+								"me"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Create Bob RUB Wallet",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Bob wallet created\", function () {",
+									"    pm.response.to.have.status(201);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.environment.set(\"bob_wallet_id\", json.wallet.id);",
+									"",
+									"pm.test(\"Bob wallet id exists\", function () {",
+									"    pm.expect(json.wallet.id).to.be.a(\"string\").and.not.empty;",
+									"});",
+									"",
+									"pm.test(\"Bob wallet currency is RUB\", function () {",
+									"    pm.expect(json.wallet.currency).to.eql(\"RUB\");",
+									"});",
+									"",
+									"pm.test(\"Bob wallet starts with zero available balance\", function () {",
+									"    pm.expect(json.balance.available_amount_minor).to.eql(0);",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bob_access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"currency\": \"RUB\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/wallets",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"wallets"
+							]
+						}
+					},
+					"response": []
+				},
+				{
+					"name": "Get Bob Wallets",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Bob wallets returned\", function () {",
+									"    pm.response.to.have.status(200);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"pm.test(\"Bob has at least one wallet\", function () {",
+									"    pm.expect(json.length).to.be.greaterThan(0);",
+									"});",
+									"",
+									"const rubWallet = json.find(item => item.wallet.currency === \"RUB\");",
+									"",
+									"pm.test(\"Bob RUB wallet exists\", function () {",
+									"    pm.expect(rubWallet).to.not.be.undefined;",
+									"});",
+									"",
+									"pm.environment.set(\"bob_wallet_id\", rubWallet.wallet.id);",
+									"",
+									"pm.test(\"Bob wallet id saved\", function () {",
+									"    pm.expect(pm.environment.get(\"bob_wallet_id\")).to.be.a(\"string\").and.not.empty;",
+									"});",
+									"",
+									"pm.test(\"Bob RUB wallet balance is zero\", function () {",
+									"    pm.expect(rubWallet.balance.available_amount_minor).to.eql(0);",
+									"});"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"protocolProfileBehavior": {
+						"disableBodyPruning": true
+					},
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{bob_access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": ""
+						},
+						"url": {
+							"raw": "{{base_url}}/wallets/me",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"wallets",
+								"me"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "04 Transfers",
+			"item": [
+				{
+					"name": "Alice Transfer to Bob",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"pm.test(\"Transfer request handled\", function () {",
+									"    pm.expect(pm.response.code).to.be.oneOf([201, 400, 409]);",
+									"});",
+									"",
+									"const json = pm.response.json();",
+									"",
+									"if (pm.response.code === 201) {",
+									"    pm.environment.set(\"transfer_id\", json.id);",
+									"",
+									"    pm.test(\"Transfer id exists\", function () {",
+									"        pm.expect(json.id).to.be.a(\"string\").and.not.empty;",
+									"    });",
+									"",
+									"    pm.test(\"Transfer amount is correct\", function () {",
+									"        pm.expect(json.amount_minor).to.eql(10000);",
+									"    });",
+									"",
+									"    pm.test(\"Transfer currency is RUB\", function () {",
+									"        pm.expect(json.currency).to.eql(\"RUB\");",
+									"    });",
+									"}",
+									"",
+									"if (pm.response.code === 400 || pm.response.code === 409) {",
+									"    pm.test(\"Transfer rejected with controlled error\", function () {",
+									"        pm.expect(json.detail).to.exist;",
+									"    });",
+									"}"
+								],
+								"type": "text/javascript",
+								"packages": {},
+								"requests": {}
+							}
+						}
+					],
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{alice_access_token}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"operation_id\": \"{{$guid}}\",\n  \"sender_wallet_id\": \"{{alice_wallet_id}}\",\n  \"recipient_wallet_id\": \"{{bob_wallet_id}}\",\n  \"amount_minor\": 10000,\n  \"currency\": \"RUB\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{base_url}}/transfers",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"transfers"
+							]
+						}
+					},
+					"response": []
+				}
+			]
+		}
+	]
+}
